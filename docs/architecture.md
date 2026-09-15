@@ -239,9 +239,34 @@ python/.venv/bin/unirobolab gen contract/examples/servo_demo_rl.json --out gener
 # 以降は 7 章と同じ sim2sim(契約は servo_demo_rl、25 Hz)
 ```
 
-環境の実測スループットは約 18 steps/s(2 物理ステップ/行動)。内訳は step サービスの往復と
-フレーム待ちで、物理そのものではない。複数インスタンスのベクトル化はここがボトルネックになる
-ので、M2 の続きで Unity 側に「N ステップ + 観測をまとめて返す」サービスを足すのが本命。
+### 学習環境の輸送経路と往復時間(2026-09-16 追加)
+
+最初の実装(joint_command トピック + step_simulation + joint_states トピック)は 17.8 steps/s
+だった。本体に `step_and_observe` サービス(`simulation_extra_interfaces/srv/StepAndObserve`:
+指令 → N ステップ → 関節状態を 1 往復)を追加したが、それだけでは 18.7 steps/s で変わらなかった。
+`ros2/step_latency_probe.py` で steps 数を変えて呼ぶと、**往復の固定分が約 48 ms** で、
+ステップ数にほぼ依存しないことが分かった。
+
+原因は ROS-TCP-Connector の TCP ソケットで Nagle アルゴリズムが有効なこと。コネクタは
+1 メッセージをシステムコマンド(JSON)と本文の複数回の write で送るので、2 回目の write が
+1 回目の ACK 待ちになり、Linux の遅延 ACK(最大 40 ms)がそのまま乗る。
+`TcpClient.NoDelay = true` の 1 行で往復 48 ms → 10 ms(hijimasa/ROS-TCP-Connector の
+`tcp-nodelay` ブランチ、本体 manifest はそのハッシュを指す)。
+
+| 構成 | 往復固定分 | 1 物理ステップ | 環境スループット(2 ステップ/行動) |
+|---|---|---|---|
+| トピック経路、target_fps 200 | - | - | 17.8 steps/s |
+| step_and_observe、Nagle 有効、200 FPS | 48 ms | 1.2〜2 ms | 18.7 steps/s |
+| step_and_observe、NoDelay、200 FPS | 13 ms | 1.9 ms | 54.9 steps/s |
+| step_and_observe、NoDelay、500 FPS | 8 ms | 2.0 ms | **90.5 steps/s** |
+
+ステップ中は 1 フレームに 1 物理ステップしか進まない設計(step_simulation の決定論のため)なので、
+1 ステップの費用はフレーム時間で決まる。学習用の設定は `scripts/train_resources.json`
+(target_fps 500、time_scale 10)。残る 8 ms はコネクタ受信スレッドの 10 ms ポーリング
+(`ROSConnection.SleepTimeSeconds`)とエンドポイントの処理で、次の改善点。
+
+学習環境は `/step_and_observe` があればそれを使い、無ければトピック経路に自動で戻る
+(`task.use_step_and_observe`)。
 
 ### 結果(2026-09-16、servo_demo_rl、simulator v1.4.0)
 
@@ -255,6 +280,12 @@ python/.venv/bin/unirobolab gen contract/examples/servo_demo_rl.json --out gener
 | 最終 100 エピソードの最終誤差(学習中) | 0.18 rad | 0.054 rad |
 | 決定論評価の整定誤差 | 0.127 rad | 0.026 rad |
 | sim2sim(25 Hz、実時間、target_fps 60) | FAIL(tracking, obs_fresh) | **PASS** |
+
+3 回目(同じ設定、`step_and_observe` + NoDelay の本体ブランチで学習): 40k ステップが 507 s
+(78.9 steps/s、PPO の更新込み)、決定論評価の整定誤差 0.016 rad、sim2sim(トピック経路)PASS:
+ideal_joint 2〜15 mrad、cheap_joint 37〜43 mrad、観測鮮度 最悪 44 ms / 平均 21 ms
+(NoDelay はトピック経路の配備側にも効き、76 ms → 44 ms)。
+サービス経路で学習した方策がトピック経路の配備で通ることを確認できた。
 
 2 回目の sim2sim: ideal_joint 誤差 4〜9 mrad、cheap_joint 55〜57 mrad(バックラッシ幅 90 mrad の
 半分に張り付く分)、実測周期 25.0 Hz、観測鮮度 最悪 76 ms / 平均 40 ms。
@@ -276,7 +307,8 @@ python/.venv/bin/unirobolab gen contract/examples/servo_demo_rl.json --out gener
 ### M2 の残り
 
 - GUI(Unity 側): 契約とタスク定義の編集、学習の起動と学習曲線・報酬項の表示、sim2sim 結果の表示
-- スループット: step サービス往復がボトルネック(18 steps/s)。Unity 側に
-  「N ステップ進めて観測を返す」サービスを足すか、複数インスタンスを束ねる
+- スループット: 90 steps/s まで来た(`step_and_observe` + NoDelay + 500 FPS)。次は
+  コネクタ受信スレッドの 10 ms ポーリング(`ROSConnection.SleepTimeSeconds`)の短縮と、
+  複数インスタンスのベクトル化
 - `uv` 同梱の学習器の配布(今は派生 Docker イメージで代替)
 - sim2sim 失敗時の原因診断(今は各チェックの理由文まで)

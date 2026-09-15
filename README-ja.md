@@ -38,7 +38,8 @@ scripts/sim2sim_container.sh build          # 派生イメージ: onnxruntime, t
 
 M1 完了、M2 の第一段階完了: シミュレータ内で PPO 学習したポリシーを ONNX に書き出し、
 ROS 2 パッケージ化して servo_demo の sim2sim に合格(ideal_joint 誤差 1 センチラジアン未満)。
-GUI とベクトル化学習はこれから。
+学習は本体の `step-and-observe` ブランチで作ったシミュレータに対して約 90 steps/s
+(制御 1 周期 = サービス 1 往復、TCP コネクタの Nagle 無効化)。GUI とベクトル化学習はこれから。
 設計・マイルストーン・結果は [docs/architecture.md](docs/architecture.md) を参照。
 
 ## 構成

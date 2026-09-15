@@ -24,6 +24,11 @@ from sensor_msgs.msg import JointState
 from simulation_interfaces.msg import Result, SimulationState
 from simulation_interfaces.srv import ResetSimulation, SetSimulationState, StepSimulation
 
+try:  # simulator >= step-and-observe branch: one round trip per control step
+    from simulation_extra_interfaces.srv import StepAndObserve
+except ImportError:  # older simulation_extra_interfaces
+    StepAndObserve = None
+
 from unirobolab.contract import Contract
 from unirobolab.ros2.policy_node import process_action_term, process_obs_term
 
@@ -67,6 +72,19 @@ class UnityContractEnv(gym.Env):
         for cli in (self.cli_state, self.cli_step, self.cli_reset):
             if not cli.wait_for_service(timeout_sec=service_timeout_s):
                 raise RuntimeError(f"service {cli.srv_name} not available")
+        # step_and_observe: command + N steps + joint state in one service call. Falls back
+        # to joint_command topic + step_simulation + joint_states topic when the simulator
+        # (or the interface package) does not have it.
+        self.entity = task.get("entity", c.ros.namespace)
+        self.cli_sao = None
+        if StepAndObserve is not None and task.get("use_step_and_observe", True):
+            cli = self.node.create_client(StepAndObserve, "/step_and_observe")
+            if cli.wait_for_service(timeout_sec=float(task.get("step_and_observe_timeout_s", 3.0))):
+                self.cli_sao = cli
+            else:
+                self.node.get_logger().warn("/step_and_observe not available; using topics + step_simulation")
+        self.node.get_logger().info(
+            f"env transport: {'step_and_observe' if self.cli_sao else 'topics + step_simulation'}")
         self.js: JointState | None = None
         self.js_seq = 0
         self.js_index: list[int] | None = None
@@ -85,7 +103,8 @@ class UnityContractEnv(gym.Env):
         fut = cli.call_async(req)
         end = time.monotonic() + timeout_s
         while rclpy.ok() and not fut.done():
-            rclpy.spin_once(self.node, timeout_sec=0.01)
+            # short timeout: with 0.01 every service response could wait up to 10 ms here
+            rclpy.spin_once(self.node, timeout_sec=0.001)
             if time.monotonic() > end:
                 raise TimeoutError(f"{cli.srv_name} timed out")
         return fut.result()
@@ -109,14 +128,37 @@ class UnityContractEnv(gym.Env):
         if res.result.result != Result.RESULT_OK:
             raise RuntimeError(f"reset_simulation failed: {res.result.error_message}")
 
+    def _index_from(self, names: list[str]) -> list[int] | None:
+        if any(j not in names for j in self.joints):
+            return None
+        return [names.index(j) for j in self.joints]
+
     def _on_js(self, msg: JointState) -> None:
+        if self.cli_sao is not None:
+            return  # observations come from the service response in this mode
         if self.js_index is None:
-            names = list(msg.name)
-            missing = [j for j in self.joints if j not in names]
-            if missing:
+            self.js_index = self._index_from(list(msg.name))
+            if self.js_index is None:
                 return
-            self.js_index = [names.index(j) for j in self.joints]
         self.js = msg
+        self.js_seq += 1
+
+    def _step_and_observe(self, targets: np.ndarray | None, steps: int) -> None:
+        """One round trip: apply targets (None = no command), run steps, take the state."""
+        req = StepAndObserve.Request()
+        req.entity = self.entity
+        req.steps = int(steps)
+        if targets is not None:
+            req.command = self._command_msg(targets)
+        res = self._call(self.cli_sao, req)
+        if res.result != StepAndObserve.Response.RESULT_OK:
+            raise RuntimeError(f"step_and_observe failed ({res.result}): {res.error_message}")
+        idx = self._index_from(list(res.joint_states.name))
+        if idx is None:
+            raise RuntimeError(f"step_and_observe returned joints {list(res.joint_states.name)}, "
+                               f"contract needs {self.joints}")
+        self.js_index = idx
+        self.js = res.joint_states
         self.js_seq += 1
 
     def _wait_new_js(self, seq_before: int, timeout_s: float = 0.2) -> JointState:
@@ -190,14 +232,18 @@ class UnityContractEnv(gym.Env):
         self.frames = []
         self.t = 0
         self.episode_terms = {k: 0.0 for k in self.reward_weights}
-        self._publish_targets(np.zeros(len(self.act_joints), dtype=np.float32))
-        seq = self.js_seq
-        self._step_sim(self.steps_per_action)
-        self._wait_new_js(seq)
+        zeros = np.zeros(len(self.act_joints), dtype=np.float32)
+        if self.cli_sao is not None:
+            self._step_and_observe(zeros, self.steps_per_action)
+        else:
+            self._publish_targets(zeros)
+            seq = self.js_seq
+            self._step_sim(self.steps_per_action)
+            self._wait_new_js(seq)
         self.last_q = self._q()
         return self._obs(), {"goal": self.goal.copy()}
 
-    def _publish_targets(self, targets: np.ndarray) -> None:
+    def _command_msg(self, targets: np.ndarray) -> JointState:
         msg = JointState()
         msg.header.stamp = self.node.get_clock().now().to_msg()
         msg.name = list(self.act_joints)
@@ -209,7 +255,10 @@ class UnityContractEnv(gym.Env):
             msg.velocity = vals
         else:
             msg.effort = vals
-        self.pub.publish(msg)
+        return msg
+
+    def _publish_targets(self, targets: np.ndarray) -> None:
+        self.pub.publish(self._command_msg(targets))
 
     def step(self, action: np.ndarray):
         raw = np.asarray(action, dtype=np.float32).reshape(-1)
@@ -218,15 +267,18 @@ class UnityContractEnv(gym.Env):
         self.last_action = raw.copy()
         self.last_action[self.act_term.offset:self.act_term.end] = clipped
 
-        self._publish_targets(target)
-        if self.command_settle_s > 0:
-            # let the command reach Unity before the physics steps consume it
-            end = time.monotonic() + self.command_settle_s
-            while time.monotonic() < end:
-                rclpy.spin_once(self.node, timeout_sec=0.001)
-        seq = self.js_seq
-        self._step_sim(self.steps_per_action)
-        self._wait_new_js(seq)
+        if self.cli_sao is not None:
+            self._step_and_observe(target, self.steps_per_action)
+        else:
+            self._publish_targets(target)
+            if self.command_settle_s > 0:
+                # let the command reach Unity before the physics steps consume it
+                end = time.monotonic() + self.command_settle_s
+                while time.monotonic() < end:
+                    rclpy.spin_once(self.node, timeout_sec=0.001)
+            seq = self.js_seq
+            self._step_sim(self.steps_per_action)
+            self._wait_new_js(seq)
 
         q = self._q()
         qd = (q - self.last_q) / (self.steps_per_action * (self.c.sim_dt_s or 0.02))

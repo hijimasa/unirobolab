@@ -14,7 +14,9 @@ unirobolab train <contract.json> --config <train.json> --out <run>   # (コン�
   ONNX を share に同梱する。ノードは契約を実行時に読むので、生成物にロジックは埋め込まない。
 - `sim2sim` は rclpy が要るので ROS 2 環境(コンテナ)で動かす。生成パッケージのノードを起動し、
   目標列を流し、`joint_states` と `policy/status` から合否を判定して JSON レポートを書く。
-- `train` は Gymnasium 環境 `ros2/unity_env.py` でシミュレータを一時停止し `step_simulation` で進める。
+- `train` は Gymnasium 環境 `ros2/unity_env.py` でシミュレータを一時停止して進める。本体の
+  `step-and-observe` ブランチなら `/step_and_observe`(指令 → N ステップ → 関節状態を 1 往復)を使い、
+  無ければ `joint_command` + `step_simulation` + `joint_states` に自動で戻る。
   観測・行動の処理は `ros2/policy_node.py` の同じ関数を使うので、学習時と配備時の配線は同一。
   出力は `policy.onnx`(方策の平均出力、契約の入出力名)、`progress.csv`(エピソードごとの
   収益・報酬項の寄与・最終誤差)、`learning_curve.png`、`eval.json`。
