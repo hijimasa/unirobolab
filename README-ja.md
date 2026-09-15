@@ -20,9 +20,23 @@ Genesis が既に担っています。UniRoboLab が対象にするのはそれ�
 - 生成される ROS 2 パッケージ(C++ ノード + ONNX Runtime)。関節順・単位・スケール・
   制御周期は学習環境と共有する *ポリシー契約* から生成される。
 
+## クイックスタート(servo_demo、配線確認ポリシー)
+
+```bash
+cd python && uv venv .venv && uv pip install -e ".[dev]" && cd ..
+python/.venv/bin/unirobolab make-test-policy contract/examples/servo_demo.json
+python/.venv/bin/unirobolab gen contract/examples/servo_demo.json --out generated --overwrite
+scripts/sim2sim_container.sh start          # ROS 2 Jazzy + シミュレータのコンテナ(../Unity_ROS2_sample が要る)
+```
+
+コンテナ内の立ち上げ・ビルド・`unirobolab sim2sim` の手順は
+[docs/architecture.md](docs/architecture.md) の 7 章を参照。実行の最後に PASS/FAIL の表と
+`generated/sim2sim_out/report.json` が出る。
+
 ## 状態
 
-雛形。設計とマイルストーンは [docs/architecture.md](docs/architecture.md) を参照。
+M1 完了: 契約 → ROS 2 パッケージ生成 → servo_demo での sim2sim PASS(配線確認ポリシー)。
+設計・マイルストーン・結果は [docs/architecture.md](docs/architecture.md) を参照。
 
 ## 構成
 
@@ -30,8 +44,8 @@ Genesis が既に担っています。UniRoboLab が対象にするのはそれ�
 |---|---|
 | `unity/UniRoboLab/` | Unity プロジェクト(GUI・シミュレータ・sim2sim)。シミュレータ本体は [Unity_ROS2_Robot_Simulator](https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator) を UPM の git パッケージとして参照 |
 | `contract/` | ポリシー契約スキーマ。観測・行動・周期の単一の情報源 |
-| `trainer/` | Python 学習バックエンド(uv 管理、バイナリに同梱) |
-| `templates/ros2_policy_node/` | 生成する ROS 2 パッケージの雛形 |
+| `python/` | Python パッケージ `unirobolab`: `gen`(ROS 2 パッケージ生成)、`make-test-policy`、`sim2sim` 評価器、`train`(未実装) |
+| `scripts/` | sim2sim 用のコンテナ起動・シミュレータ立ち上げ補助 |
 | `docs/` | 設計メモ |
 
 ## ライセンス

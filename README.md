@@ -21,10 +21,25 @@ trained in, and proving it in simulation before touching hardware.
   units, scaling and control rate come from one *policy contract* shared
   with the training environment.
 
+## Quick start (servo demo, wiring-check policy)
+
+```bash
+cd python && uv venv .venv && uv pip install -e ".[dev]" && cd ..
+python/.venv/bin/unirobolab make-test-policy contract/examples/servo_demo.json
+python/.venv/bin/unirobolab gen contract/examples/servo_demo.json --out generated --overwrite
+scripts/sim2sim_container.sh start          # ROS 2 Jazzy + simulator container (needs ../Unity_ROS2_sample)
+```
+
+Inside the container (`scripts/sim2sim_container.sh shell`): see
+[docs/architecture.md](docs/architecture.md) §7 for the bring-up, build and
+`unirobolab sim2sim` commands. The run ends with a PASS/FAIL table and
+`generated/sim2sim_out/report.json`.
+
 ## Status
 
-Skeleton. See [docs/architecture.md](docs/architecture.md) (Japanese) for
-the design and milestones.
+M1 done: contract → generated ROS 2 package → sim2sim PASS on the servo demo with a
+wiring-check policy. See [docs/architecture.md](docs/architecture.md) (Japanese) for
+the design, milestones and results.
 
 ## Layout
 
@@ -32,8 +47,8 @@ the design and milestones.
 |---|---|
 | `unity/UniRoboLab/` | Unity project (GUI, simulator, sim2sim). Simulator core is pulled from [Unity_ROS2_Robot_Simulator](https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator) as UPM git packages |
 | `contract/` | Policy contract schema: the single source of truth for observations, actions and rates |
-| `trainer/` | Python training backend (uv-managed, bundled with the binary) |
-| `templates/ros2_policy_node/` | Template of the generated ROS 2 package |
+| `python/` | Python package `unirobolab`: `gen` (ROS 2 package generator), `make-test-policy`, `sim2sim` evaluator, `train` (placeholder) |
+| `scripts/` | Container and simulator bring-up helpers for sim2sim |
 | `docs/` | Design notes |
 
 ## License

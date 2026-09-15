@@ -1,0 +1,11 @@
+{
+  "_note": "max_obs_age_s is 0.12 because joint_states from the simulator arrive through ROS-TCP-Endpoint in bursts about every 100 ms (measured 2026-09-16: p50 gap 0.3 ms, p95 100 ms). A 50 Hz policy therefore sees observations up to ~100 ms old; the training side must model that delay or the transport must be fixed.",
+  "goals": [[0.5, 0.5], [-0.5, -0.5], [0.0, 0.0]],
+  "hold_s": 4.0,
+  "settle_window_s": 1.0,
+  "warmup_s": 3.0,
+  "default_tolerance": 0.1,
+  "tolerance": { "ideal_joint": 0.05, "cheap_joint": 0.12 },
+  "rate_tolerance": 0.15,
+  "max_obs_age_s": 0.12
+}

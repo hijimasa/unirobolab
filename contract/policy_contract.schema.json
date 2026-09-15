@@ -4,98 +4,290 @@
   "title": "UniRoboLab policy contract (v0 draft)",
   "description": "Single source of truth for how a policy observes and acts. Both the training environment and the generated ROS 2 node are derived from this.",
   "type": "object",
-  "required": ["contract_version", "robot", "control", "observations", "actions", "policy"],
+  "required": [
+    "contract_version",
+    "robot",
+    "control",
+    "observations",
+    "actions",
+    "policy"
+  ],
   "additionalProperties": false,
   "properties": {
-    "contract_version": { "const": 0 },
-    "name": { "type": "string" },
+    "contract_version": {
+      "const": 0
+    },
+    "name": {
+      "type": "string"
+    },
     "robot": {
       "type": "object",
-      "required": ["urdf", "joints"],
+      "required": [
+        "urdf",
+        "joints"
+      ],
       "additionalProperties": false,
       "properties": {
-        "urdf": { "type": "string", "description": "Path to the URDF used in both training and deployment." },
+        "urdf": {
+          "type": "string",
+          "description": "Path to the URDF used in both training and deployment."
+        },
         "joints": {
           "type": "array",
           "minItems": 1,
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Canonical joint order. Every observation/action term that refers to joints uses this order."
         }
       }
     },
     "control": {
       "type": "object",
-      "required": ["policy_rate_hz"],
+      "required": [
+        "policy_rate_hz"
+      ],
       "additionalProperties": false,
       "properties": {
-        "policy_rate_hz": { "type": "number", "exclusiveMinimum": 0 },
-        "sim_dt_s": { "type": "number", "exclusiveMinimum": 0, "description": "Physics step used in training. The generated node checks that the real controller rate matches policy_rate_hz." },
-        "action_latency_steps": { "type": "integer", "minimum": 0, "default": 0 }
+        "policy_rate_hz": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "sim_dt_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Physics step used in training. The generated node checks that the real controller rate matches policy_rate_hz."
+        },
+        "action_latency_steps": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        }
       }
     },
     "observations": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/observation_term" },
+      "items": {
+        "$ref": "#/$defs/observation_term"
+      },
       "description": "Concatenated in this order to form the policy input."
     },
     "actions": {
       "type": "array",
       "minItems": 1,
-      "items": { "$ref": "#/$defs/action_term" },
+      "items": {
+        "$ref": "#/$defs/action_term"
+      },
       "description": "Policy output is split in this order."
     },
     "policy": {
       "type": "object",
-      "required": ["onnx", "input_name", "output_name"],
+      "required": [
+        "onnx",
+        "input_name",
+        "output_name"
+      ],
       "additionalProperties": false,
       "properties": {
-        "onnx": { "type": "string" },
-        "input_name": { "type": "string" },
-        "output_name": { "type": "string" },
-        "history_length": { "type": "integer", "minimum": 1, "default": 1 }
+        "onnx": {
+          "type": "string"
+        },
+        "input_name": {
+          "type": "string"
+        },
+        "output_name": {
+          "type": "string"
+        },
+        "history_length": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1
+        }
+      }
+    },
+    "ros": {
+      "type": "object",
+      "description": "How the generated ROS 2 node reaches the robot. Defaults derive from namespace.",
+      "additionalProperties": false,
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "description": "Robot namespace, e.g. ServoDemo. Topics default to /<namespace>/..."
+        },
+        "joint_states_topic": {
+          "type": "string",
+          "description": "Default /<namespace>/joint_states"
+        },
+        "command_topic": {
+          "type": "string",
+          "description": "Default /<namespace>/joint_command (sensor_msgs/JointState, as the simulator and topic_based_ros2_control expect)"
+        },
+        "command_mode": {
+          "enum": [
+            "joint_state_topic",
+            "ros2_control_commands"
+          ],
+          "default": "joint_state_topic",
+          "description": "joint_state_topic publishes JointState on command_topic; ros2_control_commands publishes Float64MultiArray on /<namespace>/<controller_name>/commands"
+        },
+        "controller_name": {
+          "type": "string",
+          "description": "ros2_control controller receiving the commands (command_mode=ros2_control_commands)"
+        },
+        "goal_topic": {
+          "type": "string",
+          "description": "Float64MultiArray feeding the 'command' observation. Default /<namespace>/policy/command. Status/debug topics live next to it."
+        }
       }
     }
   },
   "$defs": {
-    "unit": { "enum": ["rad", "deg", "rad/s", "deg/s", "m", "m/s", "m/s^2", "N", "N*m", "unitless"] },
+    "unit": {
+      "enum": [
+        "rad",
+        "deg",
+        "rad/s",
+        "deg/s",
+        "m",
+        "m/s",
+        "m/s^2",
+        "N",
+        "N*m",
+        "unitless"
+      ]
+    },
     "observation_term": {
       "type": "object",
-      "required": ["name", "source"],
+      "required": [
+        "name",
+        "source"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
+        "name": {
+          "type": "string"
+        },
         "source": {
-          "enum": ["joint_position", "joint_velocity", "joint_effort", "base_lin_vel", "base_ang_vel", "projected_gravity", "imu_orientation", "last_action", "command", "custom"]
+          "enum": [
+            "joint_position",
+            "joint_velocity",
+            "joint_effort",
+            "base_lin_vel",
+            "base_ang_vel",
+            "projected_gravity",
+            "imu_orientation",
+            "last_action",
+            "command",
+            "custom"
+          ]
         },
         "joints": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Subset of robot.joints, in robot.joints order. Omit for all joints."
         },
-        "unit": { "$ref": "#/$defs/unit" },
-        "scale": { "type": "number", "default": 1.0 },
-        "offset": { "type": "number", "default": 0.0 },
-        "clip": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
-        "deadband": { "type": "number", "minimum": 0, "description": "Values with |x| below this are zeroed before scaling. Use for sensors that never rest at exactly zero." },
-        "ros_topic": { "type": "string", "description": "Override of the ROS 2 source topic in the generated node." }
-      }
+        "unit": {
+          "$ref": "#/$defs/unit"
+        },
+        "scale": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Applied after deadband: value*scale + offset, then clip."
+        },
+        "offset": {
+          "type": "number",
+          "default": 0.0
+        },
+        "clip": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "deadband": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Values with |x| below this are zeroed before scaling. Use for sensors that never rest at exactly zero."
+        },
+        "ros_topic": {
+          "type": "string",
+          "description": "Override of the ROS 2 source topic in the generated node."
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required for source=command/custom. Joint sources take their size from joints; last_action from the action layout."
+        }
+      },
+      "description": "Processing order: deadband -> *scale + offset -> clip."
     },
     "action_term": {
       "type": "object",
-      "required": ["name", "target", "mode"],
+      "required": [
+        "name",
+        "target",
+        "mode"
+      ],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
-        "target": { "enum": ["joints", "base_twist", "custom"] },
-        "joints": { "type": "array", "items": { "type": "string" } },
-        "mode": { "enum": ["position", "velocity", "effort"] },
-        "unit": { "$ref": "#/$defs/unit" },
-        "scale": { "type": "number", "default": 1.0 },
-        "offset": { "type": "number", "default": 0.0 },
-        "clip": { "type": "array", "items": { "type": "number" }, "minItems": 2, "maxItems": 2 },
-        "ros2_control_interface": { "type": "string", "description": "e.g. position_controllers/JointGroupPositionController" }
-      }
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "enum": [
+            "joints",
+            "base_twist",
+            "custom"
+          ]
+        },
+        "joints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mode": {
+          "enum": [
+            "position",
+            "velocity",
+            "effort"
+          ]
+        },
+        "unit": {
+          "$ref": "#/$defs/unit"
+        },
+        "scale": {
+          "type": "number",
+          "default": 1.0
+        },
+        "offset": {
+          "type": "number",
+          "default": 0.0
+        },
+        "clip": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "ros2_control_interface": {
+          "type": "string",
+          "description": "e.g. position_controllers/JointGroupPositionController"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Required for target=custom; base_twist defaults to 2."
+        }
+      },
+      "description": "Processing order on the raw policy output: clip -> *scale + offset -> publish."
     }
   }
 }

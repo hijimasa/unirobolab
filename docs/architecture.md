@@ -100,15 +100,89 @@ M1 で必要になった分だけ core パッケージとして切り出す。
 
 ## 6. マイルストーン
 
-- **M0** リポジトリ雛形(このコミット)
+- **M0** リポジトリ雛形 — 完了(2026-09-15)
 - **M1** 既存の ONNX ポリシー + 契約を入力に ROS 2 パッケージを生成し、
-  Unity で sim2sim して合否を出す。**学習 GUI より先に作る。**
-  差別化の核がここなので、最初に検証する
+  Unity で sim2sim して合否を出す — **配線確認ポリシーで完了(2026-09-16)**。7 章参照
 - **M2** 学習 GUI。Unity 複数インスタンスのベクトル化環境ラッパー、
   手動ステップ(`Physics.Simulate`)と決定論性、`uv` 同梱の学習器、
   学習曲線と報酬項ごとの寄与の表示、sim2sim 失敗時の原因診断
 - **M3** 実機デプロイ。まずは自前シミュレータ + 実機 1 構成に絞る
-  (ros2_control のインターフェースは種類が多く、保守負担が膨らむ)
+  (ros2_control のインターフェースは種類が多く、保守負担が膨らむ)。
+  生成ノードの `command_mode=ros2_control_commands` はここで検証する
 
 最初のタスクは低自由度に絞る: アーム到達、移動ロボット走行、SG90 級の小型機。
 四足歩行の大規模学習は外部バックエンドに任せる。
+
+## 7. M1 の実装と結果
+
+### 構成(`python/src/unirobolab/`)
+
+| モジュール | 役割 |
+|---|---|
+| `contract.py` | 契約の読み込みと配置(各項のサイズ・オフセット)の導出。ROS 非依存 |
+| `test_policy.py` | 配線確認用 ONNX(`command` 観測を `joints` 行動へ写す線形層)。学習なし |
+| `generator.py` | ament_python パッケージ生成。契約 JSON と ONNX を share に同梱 |
+| `ros2/policy_node.py` | **ノード本体。生成物へそのまま複製される。** 契約を実行時に読む |
+| `ros2/sim2sim.py` | 評価器。生成パッケージを起動し、目標列を流し、合否とレポートを出す |
+| `cli.py` | `unirobolab show / make-test-policy / gen / sim2sim / train` |
+
+設計上の要点:
+
+- 生成物にロジックを埋め込まない。ノードは 1 ファイルで、sim2sim でも実機でも同じものが動く。
+  「観測・行動の配線の実装が 1 つしかない」ことが契約の単一情報源を支える。
+- 観測の処理順は deadband → ×scale + offset → clip、行動は clip → ×scale + offset → publish。
+  契約スキーマに明記した。
+- 関節順は契約の `robot.joints` が正準。`joint_states` の並びが違っても名前で引き直す
+  (servo_demo は実際に `[cheap_joint, ideal_joint]` で届き、契約は `[ideal, cheap]`)。
+- 指令は `ros.command_mode` で切り替える。`joint_state_topic` は Unity の
+  `/<ns>/joint_command` へ直接(topic_based_ros2_control と同じ入口)、
+  `ros2_control_commands` はコントローラの `/commands`(M3 で検証)。
+- ノードは 1 Hz で `policy/status`(JSON)を出す: 実測周期、観測の鮮度(最大・平均)、
+  推論時間、契約エラー。評価器はこれで node 側の異常を拾う。
+
+### 実行手順(servo_demo)
+
+```bash
+# ホスト
+python/.venv/bin/unirobolab make-test-policy contract/examples/servo_demo.json
+python/.venv/bin/unirobolab gen contract/examples/servo_demo.json --out generated --overwrite
+scripts/sim2sim_container.sh start            # ROS 2 + シミュレータのコンテナ(隣の Unity_ROS2_sample を使う)
+# コンテナ内(docker exec unirobolab-sim2sim-jazzy bash)
+pip3 install --user --break-system-packages onnxruntime
+bash /home/unity/unirobolab/scripts/servo_demo_bringup.sh   # endpoint → sim → start → spawn(コントローラなし)
+cd /home/unity/unirobolab/generated && colcon build --base-paths servo_demo_policy \
+    --build-base ws/build --install-base ws/install --symlink-install && source ws/install/setup.sh
+cd /home/unity/unirobolab && PYTHONPATH=python/src:$PYTHONPATH python3 -m unirobolab sim2sim \
+    contract/examples/servo_demo.json --pkg servo_demo_policy \
+    --scenario contract/examples/servo_demo.sim2sim.json --out generated/sim2sim_out
+```
+
+注意: `PYTHONPATH=python/src` と書くと ROS の `PYTHONPATH` を消して `rclpy` が見つからなくなる。
+必ず `:$PYTHONPATH` を付ける。
+
+### 結果(2026-09-16、simulator v1.4.0、ROS 2 Jazzy)
+
+配線確認ポリシー(目標 = 指令)で ±0.5 rad と 0 のステップ、各 4 s 保持:
+
+| チェック | 結果 |
+|---|---|
+| joints_present | ok(並び違いを名前で解決) |
+| node_alive | ok、契約エラーなし |
+| rate | 50.0 Hz(目標 50) |
+| obs_fresh | 最悪 107 ms、平均 55 ms(上限 120 ms、下記) |
+| tracking | ideal_joint 誤差 1e-4 rad、cheap_joint 3〜9 mrad(バックラッシ半幅 26 mrad 以内) |
+| finite | ok |
+
+否定テスト(意図的に壊した契約)は `joints_present` と `tracking` で FAIL になることを確認した
+(関節名の誤り、行動スケールの不一致)。
+
+### 発見: joint_states が 100 ms ごとにまとめて届く
+
+`/ServoDemo/joint_states` の到着間隔は p50 0.3 ms、p95 100 ms で、約 3 通が 100 ms ごとに
+バーストで届く(シミュレータ側 `JointStatePub.publishRateHz` の既定は 30 Hz)。
+ROS-TCP-Connector / Endpoint のどこかで 100 ms 単位に束ねられている。
+50 Hz のポリシーは最大 100 ms 古い観測で動くことになる。
+
+- sim2sim ではシナリオの `max_obs_age_s` で許容量を明示する(servo_demo は 0.12)。
+- M2 の学習環境はこの遅延を入れるか、シミュレータ側の輸送を直す必要がある。
+  本体リポジトリ側の調査項目として残す(閉ループ制御の忠実度に関わる)。

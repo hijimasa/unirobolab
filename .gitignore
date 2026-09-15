@@ -44,3 +44,6 @@ Release/
 
 # ---- editor state inside the Unity project ----
 unity/**/.vscode/
+
+# ---- generated packages and sim2sim output ----
+generated/

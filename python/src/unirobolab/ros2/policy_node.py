@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""Contract-driven policy node.
+
+This file is copied verbatim into every generated ROS 2 package. It has no
+generated code in it: everything robot-specific (joint order, topics, scaling,
+rate, ONNX file) comes from the policy contract it loads at start-up. The same
+file therefore runs a policy in sim2sim and on the real robot, which is the
+point: there is exactly one implementation of the observation/action wiring.
+
+It deliberately avoids importing the ``unirobolab`` package so the generated
+package depends only on rclpy, numpy and onnxruntime.
+
+Topics (relative to the contract's ``ros`` section):
+  sub  joint_states_topic         sensor_msgs/JointState
+  sub  goal_topic                 std_msgs/Float64MultiArray   (the 'command' observation)
+  pub  command_topic              sensor_msgs/JointState       (command_mode=joint_state_topic)
+       /<ns>/<controller>/commands std_msgs/Float64MultiArray  (command_mode=ros2_control_commands)
+  pub  <goal_topic dir>/status    std_msgs/String (JSON, 1 Hz)
+  pub  <goal_topic dir>/observation, .../action  std_msgs/Float64MultiArray (debug)
+"""
+
+from __future__ import annotations
+
+import collections
+import json
+import os
+import time
+
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Float64MultiArray, String
+
+SUPPORTED_OBS = {"joint_position", "joint_velocity", "joint_effort", "command", "last_action"}
+
+
+class PolicyNode(Node):
+    def __init__(self) -> None:
+        super().__init__("policy_node")
+        self.declare_parameter("contract_path", "")
+        self.declare_parameter("onnx_path", "")
+        self.declare_parameter("namespace_override", "")
+        self.declare_parameter("publish_debug", True)
+
+        contract_path = self.get_parameter("contract_path").value
+        if not contract_path:
+            raise RuntimeError("contract_path parameter is required")
+        with open(contract_path, encoding="utf-8") as f:
+            self.c = json.load(f)
+        self.contract_dir = os.path.dirname(os.path.abspath(contract_path))
+        self.errors: list[str] = []
+
+        self.joints: list[str] = list(self.c["robot"]["joints"])
+        self.rate_hz = float(self.c["control"]["policy_rate_hz"])
+        pol = self.c["policy"]
+        self.history = int(pol.get("history_length", 1))
+        self.input_name = pol.get("input_name", "obs")
+        self.output_name = pol.get("output_name", "actions")
+
+        # --- layouts -----------------------------------------------------
+        self.actions = self._layout(self.c["actions"], self._action_size)
+        self.action_dim = sum(n for _, n, _ in self.actions)
+        self.observations = self._layout(self.c["observations"], self._obs_size)
+        self.obs_dim = sum(n for _, n, _ in self.observations)
+        for spec, _, _ in self.observations:
+            if spec["source"] not in SUPPORTED_OBS:
+                self._fail(f"observation source {spec['source']!r} not supported by this node")
+
+        # --- topics ------------------------------------------------------
+        ros = self.c.get("ros") or {}
+        ns = self.get_parameter("namespace_override").value or ros.get("namespace", "")
+        prefix = f"/{ns}" if ns else ""
+        self.joint_states_topic = ros.get("joint_states_topic", f"{prefix}/joint_states")
+        self.command_topic = ros.get("command_topic", f"{prefix}/joint_command")
+        self.command_mode = ros.get("command_mode", "joint_state_topic")
+        self.goal_topic = ros.get("goal_topic", f"{prefix}/policy/command")
+        self.controller_name = ros.get("controller_name")
+        status_base = self.goal_topic.rsplit("/", 1)[0] if "/" in self.goal_topic else ""
+
+        # --- ONNX --------------------------------------------------------
+        onnx_path = self.get_parameter("onnx_path").value or pol["onnx"]
+        if not os.path.isabs(onnx_path):
+            onnx_path = os.path.join(self.contract_dir, onnx_path)
+        import onnxruntime as ort  # imported late so a missing install is a clear error
+        self.sess = ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
+        in_shape = self.sess.get_inputs()[0].shape
+        out_shape = self.sess.get_outputs()[0].shape
+        want_in = self.obs_dim * self.history
+        if isinstance(in_shape[-1], int) and in_shape[-1] != want_in:
+            self._fail(f"ONNX input dim {in_shape[-1]} != contract {want_in}")
+        if isinstance(out_shape[-1], int) and out_shape[-1] != self.action_dim:
+            self._fail(f"ONNX output dim {out_shape[-1]} != contract {self.action_dim}")
+
+        # --- state -------------------------------------------------------
+        self.js: JointState | None = None
+        self.js_time: float = 0.0
+        self.js_index: list[int] | None = None
+        self.goal = np.zeros(self._goal_size(), dtype=np.float32)
+        self.goal_received = False
+        self.last_action = np.zeros(self.action_dim, dtype=np.float32)
+        self.frames: collections.deque = collections.deque(maxlen=self.history)
+        self.steps = 0
+        self.tick_times: collections.deque = collections.deque(maxlen=int(self.rate_hz * 2) + 2)
+        self.infer_ms = 0.0
+        self.obs_ages: list[float] = []  # joint_states age at each tick, cleared every status
+
+        qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
+                         history=HistoryPolicy.KEEP_LAST, depth=10)
+        self.create_subscription(JointState, self.joint_states_topic, self._on_js, qos)
+        self.create_subscription(Float64MultiArray, self.goal_topic, self._on_goal, qos)
+        if self.command_mode == "joint_state_topic":
+            self.pub_cmd = self.create_publisher(JointState, self.command_topic, qos)
+        elif self.command_mode == "ros2_control_commands":
+            topic = f"{prefix}/{self.controller_name}/commands"
+            self.pub_cmd = self.create_publisher(Float64MultiArray, topic, qos)
+        else:
+            self._fail(f"unknown command_mode {self.command_mode!r}")
+        self.pub_status = self.create_publisher(String, f"{status_base}/status", qos)
+        self.debug = bool(self.get_parameter("publish_debug").value)
+        if self.debug:
+            self.pub_obs = self.create_publisher(Float64MultiArray, f"{status_base}/observation", qos)
+            self.pub_act = self.create_publisher(Float64MultiArray, f"{status_base}/action", qos)
+
+        self.create_timer(1.0 / self.rate_hz, self._tick)
+        self.create_timer(1.0, self._publish_status)
+        self.get_logger().info(
+            f"policy {self.c.get('name')}: {self.rate_hz:g} Hz, joints={self.joints}, "
+            f"obs {self.obs_dim}x{self.history} -> act {self.action_dim}, "
+            f"states={self.joint_states_topic} cmd={self.command_topic} ({self.command_mode})")
+        if self.errors:
+            self.get_logger().error("contract errors: " + "; ".join(self.errors))
+
+    # ------------------------------------------------------------------ layout
+    def _obs_size(self, spec: dict) -> int:
+        s = spec["source"]
+        if s in ("joint_position", "joint_velocity", "joint_effort"):
+            return len(spec.get("joints") or self.joints)
+        if s == "last_action":
+            return self.action_dim
+        if s in ("command", "custom"):
+            return int(spec["size"])
+        return {"base_lin_vel": 3, "base_ang_vel": 3, "projected_gravity": 3,
+                "imu_orientation": 4}.get(s, 0)
+
+    def _action_size(self, spec: dict) -> int:
+        t = spec["target"]
+        if t == "joints":
+            return len(spec.get("joints") or self.joints)
+        return int(spec.get("size", 2 if t == "base_twist" else 0))
+
+    @staticmethod
+    def _layout(specs, size_fn):
+        out, off = [], 0
+        for spec in specs:
+            n = size_fn(spec)
+            out.append((spec, n, off))
+            off += n
+        return out
+
+    def _goal_size(self) -> int:
+        for spec, n, _ in self.observations:
+            if spec["source"] == "command":
+                return n
+        return 0
+
+    def _fail(self, msg: str) -> None:
+        self.errors.append(msg)
+
+    # --------------------------------------------------------------- callbacks
+    def _on_js(self, msg: JointState) -> None:
+        self.js = msg
+        self.js_time = time.monotonic()
+        if self.js_index is None:
+            names = list(msg.name)
+            missing = [j for j in self.joints if j not in names]
+            if missing:
+                if not any(e.startswith("joints missing") for e in self.errors):
+                    self._fail(f"joints missing from {self.joint_states_topic}: {missing} "
+                               f"(got {names})")
+                    self.get_logger().error(self.errors[-1])
+                return
+            self.js_index = [names.index(j) for j in self.joints]
+            self.get_logger().info(f"joint index map resolved: {dict(zip(self.joints, self.js_index))}")
+
+    def _on_goal(self, msg: Float64MultiArray) -> None:
+        data = np.asarray(msg.data, dtype=np.float32)
+        if data.shape[0] != self.goal.shape[0]:
+            self.get_logger().warn(
+                f"goal has {data.shape[0]} values, contract expects {self.goal.shape[0]}; ignored",
+                throttle_duration_sec=2.0)
+            return
+        self.goal = data
+        self.goal_received = True
+
+    # --------------------------------------------------------------- main loop
+    def _joint_array(self, field: str) -> np.ndarray | None:
+        arr = getattr(self.js, field)
+        if len(arr) < len(self.js.name):
+            return None
+        return np.asarray(arr, dtype=np.float32)[self.js_index]
+
+    def _select(self, full: np.ndarray, spec: dict) -> np.ndarray:
+        js = spec.get("joints")
+        if not js:
+            return full
+        return full[[self.joints.index(j) for j in js]]
+
+    def _assemble(self) -> np.ndarray | None:
+        frame = np.zeros(self.obs_dim, dtype=np.float32)
+        for spec, n, off in self.observations:
+            s = spec["source"]
+            if s == "joint_position":
+                v = self._joint_array("position")
+            elif s == "joint_velocity":
+                v = self._joint_array("velocity")
+            elif s == "joint_effort":
+                v = self._joint_array("effort")
+            elif s == "command":
+                v = self.goal
+            elif s == "last_action":
+                v = self.last_action
+            else:
+                v = np.zeros(n, dtype=np.float32)
+            if v is None:
+                self.get_logger().warn(f"{s}: field missing in joint_states", throttle_duration_sec=2.0)
+                return None
+            if s.startswith("joint_"):
+                v = self._select(v, spec)
+            if v.shape[0] != n:
+                self.get_logger().error(f"{spec['name']}: got {v.shape[0]} values, expected {n}")
+                return None
+            v = v.astype(np.float32, copy=True)
+            db = float(spec.get("deadband", 0.0))
+            if db > 0:
+                v[np.abs(v) < db] = 0.0
+            v = v * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
+            clip = spec.get("clip")
+            if clip:
+                v = np.clip(v, clip[0], clip[1])
+            frame[off:off + n] = v
+        return frame
+
+    def _tick(self) -> None:
+        now = time.monotonic()
+        self.tick_times.append(now)
+        if self.js is None or self.js_index is None:
+            return
+        self.obs_ages.append(now - self.js_time)
+        frame = self._assemble()
+        if frame is None:
+            return
+        if not self.frames:
+            for _ in range(self.history):
+                self.frames.append(frame)
+        else:
+            self.frames.append(frame)
+        x = np.concatenate(list(self.frames))[None, :]  # oldest .. newest
+
+        t0 = time.perf_counter()
+        y = self.sess.run([self.output_name], {self.input_name: x})[0]
+        self.infer_ms = (time.perf_counter() - t0) * 1e3
+        raw = np.asarray(y, dtype=np.float32).reshape(-1)
+        if raw.shape[0] != self.action_dim or not np.all(np.isfinite(raw)):
+            self.get_logger().error(f"policy output invalid: shape {raw.shape}, finite={np.all(np.isfinite(raw))}")
+            return
+
+        targets_by_joint: dict[str, float] = {}
+        mode = None
+        for spec, n, off in self.actions:
+            a = raw[off:off + n].copy()
+            clip = spec.get("clip")
+            if clip:
+                a = np.clip(a, clip[0], clip[1])
+            raw[off:off + n] = a  # last_action sees the clipped raw output
+            a = a * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
+            if spec["target"] == "joints":
+                mode = spec["mode"]
+                for j, v in zip(spec.get("joints") or self.joints, a):
+                    targets_by_joint[j] = float(v)
+        self.last_action = raw
+
+        if targets_by_joint:
+            self._publish_command(targets_by_joint, mode)
+        if self.debug:
+            self.pub_obs.publish(Float64MultiArray(data=[float(v) for v in x[0]]))
+            self.pub_act.publish(Float64MultiArray(data=[float(v) for v in raw]))
+        self.steps += 1
+
+    def _publish_command(self, targets: dict[str, float], mode: str) -> None:
+        names = [j for j in self.joints if j in targets]
+        vals = [targets[j] for j in names]
+        if self.command_mode == "joint_state_topic":
+            msg = JointState()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.name = names
+            if mode == "position":
+                msg.position = vals
+            elif mode == "velocity":
+                msg.velocity = vals
+            else:
+                msg.effort = vals
+            self.pub_cmd.publish(msg)
+        else:
+            self.pub_cmd.publish(Float64MultiArray(data=vals))
+
+    def _publish_status(self) -> None:
+        ticks = [t for t in self.tick_times if t > time.monotonic() - 1.0]
+        st = {
+            "name": self.c.get("name"),
+            "rate_target_hz": self.rate_hz,
+            "rate_measured_hz": float(len(ticks)),
+            "steps": self.steps,
+            "joints_ok": self.js_index is not None,
+            "goal_received": self.goal_received,
+            # joint_states age as seen by the policy loop, over the last status window
+            "obs_age_max_s": round(max(self.obs_ages), 4) if self.obs_ages else None,
+            "obs_age_mean_s": round(float(np.mean(self.obs_ages)), 4) if self.obs_ages else None,
+            "inference_ms": round(self.infer_ms, 3),
+            "errors": list(self.errors),
+        }
+        self.pub_status.publish(String(data=json.dumps(st)))
+        self.obs_ages.clear()
+
+
+def main(args=None) -> None:
+    rclpy.init(args=args)
+    node = PolicyNode()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
+
+
+if __name__ == "__main__":
+    main()
