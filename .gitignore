@@ -1,0 +1,43 @@
+# ---- Unity (unity/UniRoboLab) ----
+unity/**/Library/
+unity/**/Temp/
+unity/**/Obj/
+unity/**/Logs/
+unity/**/UserSettings/
+unity/**/Build/
+unity/**/Builds/
+unity/**/MemoryCaptures/
+unity/**/Recordings/
+unity/**/*.csproj
+unity/**/*.sln
+unity/**/*.slnx
+unity/**/.vs/
+unity/**/.idea/
+unity/**/crashlytics-build.properties
+
+# ---- Python (trainer) ----
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# ---- Training artifacts ----
+runs/
+*.onnx
+!contract/examples/**/*.onnx
+
+# ---- ROS 2 (generated packages, colcon) ----
+generated/
+install/
+log/
+
+# ---- Release bundles ----
+Release/
+
+# ---- OS / editor ----
+.DS_Store
+*.swp

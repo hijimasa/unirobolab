@@ -1,0 +1,29 @@
+{
+  "contract_version": 0,
+  "name": "arm_reach_2dof",
+  "robot": {
+    "urdf": "robots/arm_2dof/arm_2dof.urdf",
+    "joints": ["joint1", "joint2"]
+  },
+  "control": {
+    "policy_rate_hz": 50,
+    "sim_dt_s": 0.005,
+    "action_latency_steps": 0
+  },
+  "observations": [
+    { "name": "q",       "source": "joint_position", "unit": "rad",   "scale": 1.0 },
+    { "name": "qd",      "source": "joint_velocity", "unit": "rad/s", "scale": 0.1, "deadband": 0.02 },
+    { "name": "goal",    "source": "command",        "unit": "m",     "scale": 1.0 },
+    { "name": "prev_a",  "source": "last_action" }
+  ],
+  "actions": [
+    { "name": "q_target", "target": "joints", "mode": "position", "unit": "rad", "scale": 0.5, "clip": [-1.0, 1.0],
+      "ros2_control_interface": "position_controllers/JointGroupPositionController" }
+  ],
+  "policy": {
+    "onnx": "runs/arm_reach_2dof/policy.onnx",
+    "input_name": "obs",
+    "output_name": "actions",
+    "history_length": 1
+  }
+}
