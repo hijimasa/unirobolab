@@ -60,16 +60,34 @@ sim2sim で検出したいのは具体的には次の類のずれ:
 `Unity_ROS2_Robot_Simulator` をコピーせず、**UPM の git URL + コミットハッシュ**で参照する。
 UnitySensors / ROS-TCP-Connector / URDF-Importer が既にこの方式なので揃える。
 
-やること(シミュレータ側リポジトリで):
+2026-09-15 に本体側の切り出しが完了(main にマージ済み)。`Packages/` 配下の埋め込みパッケージ:
 
-- `Assets/Scripts/{ServoModel,SdfWorld,UrdfProperties,Aerodynamics,Hydrodynamics}` の
-  asmdef 単位を `Packages/` 配下の UPM パッケージに移し、`package.json` を付ける
-- `Assets/Scripts/` 直下の `JointStatePub` / `JointStateSub` / `PhysicsRateController` /
-  `SimulationControl` 系も core パッケージにまとめる
-- 依存(NaughtyWaterBuoyancy など)は各 `package.json` の dependencies に書く
+| パッケージ | 内容 | 同じ manifest に必要なもの |
+|---|---|---|
+| `com.react-robot.servo-model` | `ServoJointModel` | - |
+| `com.react-robot.sdf-world` | `SdfWorldImporter` | - |
+| `com.react-robot.urdf-properties` | `CollisionMaterialApplier` | UnitySensors (hijimasa fork) |
+| `com.react-robot.hydrodynamics` | `HydrodynamicFloatingObject` | NaughtyWaterBuoyancy (hijimasa fork) |
+| `com.react-robot.aerodynamics` | `AeroSurface`、翼素理論プロペラ | `com.react-robot.hydrodynamics` |
 
-それまでは `unity/UniRoboLab/Packages/manifest.json` には既にパッケージ化済みの
-依存だけを書いておく。
+`unity/UniRoboLab/Packages/manifest.json` はこれらをハッシュ固定で参照している。
+本体を更新したらハッシュを上げる。手元で本体と同時に編集したいときは、本体を隣接 clone にして
+`file:../../../Unity_ROS2_Robot_Simulator/Packages/ServoModel` に一時的に切り替える
+(git 依存は `package.json` に書けないため、fork 群は manifest 側に置いたままにする)。
+
+プロジェクト設定で本体から引き継いだもの:
+
+- `scriptingDefineSymbols` の `Standalone: ROS2`。ROS-TCP-Connector の `TimeMsg` は
+  この定義で `sec` が `int` になる。無いと UnitySensorsROS が `uint`→`int` の変換で
+  コンパイルエラーになる(2026-09-15 に実際に踏んだ)。
+- `ProjectSettings/DynamicsManager.asset` を本体からコピー(solver 16/4 反復、TGS、
+  improved patch friction)。sim2sim の物理を本体と揃えるため。`TimeManager` は
+  既定の 0.02 s で本体と同じ。
+
+まだ本体の `Assets/Scripts/` 直下に残っているもの(Assembly-CSharp):
+`JointStatePub` / `JointStateSub` / `PhysicsRateController` / `SimulationControl` 系、
+ROS メッセージ(`Assets/RosMessages`)。これらは GUI とシーンに結びついているので、
+M1 で必要になった分だけ core パッケージとして切り出す。
 
 ## 5. 名前と商標
 

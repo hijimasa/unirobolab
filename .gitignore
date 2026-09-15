@@ -41,3 +41,6 @@ Release/
 # ---- OS / editor ----
 .DS_Store
 *.swp
+
+# ---- editor state inside the Unity project ----
+unity/**/.vscode/
