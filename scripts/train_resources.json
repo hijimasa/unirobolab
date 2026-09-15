@@ -1,7 +1,7 @@
 {
   "settings": {
     "physics_hz": 50,
-    "target_fps": 500,
+    "target_fps": 2000,
     "time_scale": 10
   }
 }

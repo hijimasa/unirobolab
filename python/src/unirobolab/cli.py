@@ -68,7 +68,9 @@ def cmd_sim2sim(a) -> int:
 
 def cmd_train(a) -> int:
     from unirobolab import train
-    return train.run(a.contract, a.config, a.out, a.backend)
+    ents = a.entities.split(",") if a.entities else None
+    return train.run(a.contract, a.config, a.out, a.backend, transport=a.transport,
+                     host=a.host, port=a.port, n_envs=a.n_envs, entities=ents)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -111,6 +113,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--config", required=True, help="task/train JSON (goal range, reward terms, PPO settings)")
     s.add_argument("--out", required=True, help="run directory (policy.onnx, progress.csv, ...)")
     s.add_argument("--backend", default="unity", choices=["unity"])
+    s.add_argument("--transport", default="direct", choices=["direct", "ros"],
+                   help="direct: the simulator's learning server (SIM_LEARNING_PORT); ros: services/topics")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=10100, help="learning server port (direct)")
+    s.add_argument("--n-envs", type=int, default=1, help="direct: entities <ns>_0..<n-1> in one scene")
+    s.add_argument("--entities", help="direct: explicit comma-separated entity names")
     s.set_defaults(fn=cmd_train)
 
     a = p.parse_args(argv)

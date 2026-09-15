@@ -42,8 +42,16 @@ timeout 30 ros2 run simulation_ros2_utils set_sim_state --ros-args -p set_state:
 sleep 2
 
 URDF=$(ros2 pkg prefix servo_demo_description)/share/servo_demo_description/robots/servo_demo.urdf
-timeout 60 ros2 run simulation_ros2_utils spawn_entity --ros-args -r spawn_entity:=/spawn_entity \
-  -p urdf_path:="$URDF" -p name:="$NS" -p x:=0.0 -p y:=0.0 -p z:=0.0 -p R:=0.0 -p P:=0.0 -p Y:=-1.57 2>&1 | tail -2
+# N_ENTITIES > 1: spawn copies named ${NS}_0.. in a row (for the direct learning channel,
+# which addresses entities by name; their ROS topics all share /${NS}/... and are unused).
+N=${N_ENTITIES:-1}
+for ((i=0; i<N; i++)); do
+  if [ "$N" -eq 1 ]; then NAME=$NS; else NAME="${NS}_$i"; fi
+  X=$(python3 -c "print($i * ${ENTITY_SPACING:-0.6})")
+  timeout 60 ros2 run simulation_ros2_utils spawn_entity --ros-args -r spawn_entity:=/spawn_entity \
+    -p urdf_path:="$URDF" -p robot_name:="$NAME" -p x:=$X -p y:=0.0 -p z:=0.0 -p R:=0.0 -p P:=0.0 -p Y:=-1.57 2>&1 | tail -1
+done
 sleep 3
 timeout 8 ros2 topic echo /$NS/joint_states --once --field name 2>/dev/null | tr '\n' ' '; echo
+[ -n "${SIM_LEARNING_PORT:-}" ] && echo "learning server port: $SIM_LEARNING_PORT (SIM_LEARNING_PORT is inherited by the player)"
 echo "bringup done (sim log: /tmp/sim_bringup.log)"

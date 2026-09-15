@@ -40,9 +40,11 @@ Inside the container (`scripts/sim2sim_container.sh shell`): see
 
 M1 done, M2 first slice done: a policy trained with PPO inside the simulator is exported
 to ONNX, packaged for ROS 2 and passes sim2sim on the servo demo (ideal joint error under
-1 centiradian). Training runs at about 90 env steps/s against a simulator built from its
-`step-and-observe` branch (one service round trip per control step, Nagle disabled in
-the TCP connector). GUI and vectorised training are still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
+1 centiradian). Training does not go through ROS 2: the simulator's learning server (its
+`learning-server` branch) steps K robots in one scene per round trip, 1,850 env steps per
+second on the servo demo with 16 robots (400k PPO steps in under 4 minutes, settled error
+0.006 rad, sim2sim PASS). ROS 2 stays the deployment and sim2sim path.
+The GUI is still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
 the design, milestones and results.
 
 ## Layout

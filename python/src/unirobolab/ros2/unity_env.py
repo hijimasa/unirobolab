@@ -30,7 +30,7 @@ except ImportError:  # older simulation_extra_interfaces
     StepAndObserve = None
 
 from unirobolab.contract import Contract
-from unirobolab.ros2.policy_node import process_action_term, process_obs_term
+from unirobolab.obs_math import process_action_term, process_obs_term
 
 
 class UnityContractEnv(gym.Env):

@@ -312,3 +312,65 @@ ideal_joint 2〜15 mrad、cheap_joint 37〜43 mrad、観測鮮度 最悪 44 ms /
   複数インスタンスのベクトル化
 - `uv` 同梱の学習器の配布(今は派生 Docker イメージで代替)
 - sim2sim 失敗時の原因診断(今は各チェックの理由文まで)
+
+## 9. 学習は ROS 2 を通さない: 直結の学習サーバ(2026-09-16)
+
+8 章の経路(ROS 2 サービス)は往復の固定分 8 ms が ROS-TCP-Endpoint(Python)と DDS で、
+物理 2 ステップの 4 ms より大きい。学習には ROS 2 は要らない(配備と sim2sim のための経路)ので、
+本体に学習専用の直結 TCP サーバを足した(`Assets/Scripts/SimulationLearningServer.cs`、
+ブランチ learning-server)。
+
+- 有効化は `settings.learning_port` か環境変数 `SIM_LEARNING_PORT`。既定は無効で、既存の挙動には触れない。
+- 1 往復で「複数エンティティへの関節指令 → N ステップ → 全エンティティの関節状態」。
+  指令の適用・ステップ・観測は step_and_observe と同じ関数(JointStateSub.ApplyCommand、
+  RunSteps、BuildObservation)。プロトコルは長さ付きの小さなバイナリ(op: INFO / RESET / STEP /
+  PING / PAUSE)。
+- ベクトル化は「複数インスタンス」ではなく「1 シーンに複数エンティティ」。ステップ中は
+  1 フレームに 1 物理ステップなので、K 体を束ねてもフレーム数は増えず、K 倍近くスケールする。
+  `scripts/servo_demo_bringup.sh` の `N_ENTITIES=K` が `ServoDemo_0..K-1` を 0.6 m 間隔で並べる
+  (spawn_entity のパラメータ名は `robot_name`。サンプルの launch は `name` を渡していて効いていない)。
+- Python 側は `direct/client.py`(プロトコル)、`direct/vec_env.py`(SB3 の VecEnv)、
+  `task.py`(目標と報酬、ROS 経路の環境と共通化)、`obs_math.py`(観測・行動の処理。
+  `ros2/policy_node.py` の複製と一致することを `tests/test_obs_math.py` が確認)。
+- `unirobolab train --transport direct --n-envs K`。ROS 経路は `--transport ros` で残す。
+
+### 計測(2026-09-16、servo_demo、-batchmode -nographics、physics 50 Hz、2 ステップ/行動)
+
+| エンティティ数 | 往復/s | env steps/s | 1 往復 |
+|---|---|---|---|
+| 1 | 165 | 165 | 5.8 ms |
+| 8 | 155 | 1,241 | 5.5 ms |
+| 16 | 136 | 2,180 | 5.8 ms |
+| 32 | 100 | 3,189 | 6.4 ms |
+
+ROS 経路の 90 steps/s に対し、1 体でも 1.8 倍、16 体で 24 倍。1 往復は物理 2 ステップ分の
+フレーム待ち(1 フレーム 1 ステップの設計、target_fps 500 でも 2000 でも約 2.5 ms/フレーム)が
+ほぼ全てで、TCP と直列化は 1 ms 未満。32 体で往復が伸び始めるのは物理そのもの
+(32 体 × 3 リンク)の費用。さらに上げるには「ステップ中は複数物理ステップを 1 フレームで回す」
+モードが要るが、FixedUpdate 依存のコンポーネント(ServoJointModel など)との整合を取る必要があり、
+別の段階にする。
+
+PPO 側の注意: n_steps は env ごとなので、16 体では n_steps 50(ロールアウト 800)にする。
+1 体用の n_steps 400 のままだと 40k ステップで更新が 6 回しか回らず学習しない
+(最終誤差 0.31 rad で失敗した)。
+
+### 結果: 直結経路で学習 → ROS 2 経路で sim2sim PASS(2026-09-16)
+
+`unirobolab train ... --transport direct --n-envs 16`(400k ステップ、n_steps 50、log_std_init -1.5):
+
+| 指標 | ROS 経路 1 体(3 回目) | 直結 16 体 |
+|---|---|---|
+| 学習時間 | 40k ステップ / 507 s | 400k ステップ / 216 s(1,854 env steps/s、PPO 更新込み) |
+| 決定論評価の整定誤差 | 0.016 rad | **0.006 rad** |
+| sim2sim(トピック経路、25 Hz) | PASS、ideal 2〜15 mrad | **PASS、ideal 0.3〜5 mrad、cheap 4〜21 mrad** |
+
+10 倍のサンプルを 4 割の時間で回せるようになり、方策も精度が上がった。直結経路で学習した方策を
+ROS 2 経路(生成パッケージ + トピック)で配備しても通る、が確認できたので、
+「学習は直結、配備は ROS 2」を既定にする。学習曲線は `docs/images/servo_demo_rl_learning_curve.png`。
+
+### 残り
+
+- `PAUSE` op を入れたプレイヤーの再ビルド(Unity ライセンスの一時的な失敗で未ビルド。それまでは
+  `set_sim_state pause` を ROS で先に呼ぶ。学習環境は "unknown op" を検出して警告する)
+- ステップ中に複数物理ステップを 1 フレームで回すモード(FixedUpdate 依存コンポーネントとの整合が課題)
+- GUI、uv 同梱配布、M3(ros2_control_commands)

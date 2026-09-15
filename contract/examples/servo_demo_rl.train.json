@@ -1,5 +1,5 @@
 {
-  "_note": "25 Hz policy = 2 physics steps of 20 ms per action; joint_states publish at 30 Hz sim-time, so every action sees at least one fresh state. Goals stay inside the +-1 rad action range and well inside the +-1.7 rad joint limits. First run (20k steps, log_std_init 0) reached final |err| 0.18 rad and was still improving; 40k steps with log_std_init -1.5 is the second setting.",
+  "_note": "25 Hz policy = 2 physics steps of 20 ms per action; goals stay inside the +-1 rad action range and well inside the +-1.7 rad joint limits. PPO settings assume the direct transport with --n-envs 16: n_steps is per env (rollout = 16 x 50 = 800), 400k steps take about 5 minutes at ~1500 env steps/s. History: 1 env over ROS needed n_steps 400 / 40k steps (37 min) with log_std_init -1.5 to reach 0.026 rad.",
   "task": {
     "physics_steps_per_action": 2,
     "episode_steps": 50,
@@ -15,10 +15,10 @@
   },
   "train": {
     "algo": "ppo",
-    "total_timesteps": 40000,
+    "total_timesteps": 400000,
     "seed": 0,
-    "n_steps": 400,
-    "batch_size": 100,
+    "n_steps": 50,
+    "batch_size": 200,
     "n_epochs": 10,
     "learning_rate": 0.0003,
     "gamma": 0.97,
