@@ -176,13 +176,107 @@ cd /home/unity/unirobolab && PYTHONPATH=python/src:$PYTHONPATH python3 -m unirob
 否定テスト(意図的に壊した契約)は `joints_present` と `tracking` で FAIL になることを確認した
 (関節名の誤り、行動スケールの不一致)。
 
-### 発見: joint_states が 100 ms ごとにまとめて届く
+### 発見と解決: joint_states が 100 ms ごとにまとめて届いていた
 
-`/ServoDemo/joint_states` の到着間隔は p50 0.3 ms、p95 100 ms で、約 3 通が 100 ms ごとに
-バーストで届く(シミュレータ側 `JointStatePub.publishRateHz` の既定は 30 Hz)。
-ROS-TCP-Connector / Endpoint のどこかで 100 ms 単位に束ねられている。
-50 Hz のポリシーは最大 100 ms 古い観測で動くことになる。
+最初の計測では `/ServoDemo/joint_states` の到着間隔が p50 0.3 ms、p95 100 ms で、
+約 3 通が 100 ms ごとにバーストで届いていた。原因は描画周期で、本体の
+`FrameRateController.Start` が `Application.targetFrameRate = 10` を固定している。
+10 FPS では Unity が 1 フレームに 50 Hz の物理ステップを 5 回連続で回すため、
+FixedUpdate から出る配信は壁時計上まとめて出て、指令の消費も 1 フレームに 1 回になる。
+ROS-TCP の束ね処理ではなかった。
 
-- sim2sim ではシナリオの `max_obs_age_s` で許容量を明示する(servo_demo は 0.12)。
-- M2 の学習環境はこの遅延を入れるか、シミュレータ側の輸送を直す必要がある。
-  本体リポジトリ側の調査項目として残す(閉ループ制御の忠実度に関わる)。
+解決は `simulation_resources.json` の `settings.target_fps`(`SIMULATION_RESOURCES_CONFIG` で指定)。
+`scripts/sim2sim_resources.json` に置き、立ち上げスクリプトが環境変数で渡す。
+
+| target_fps | joint_states 間隔 p50 / p95 / max | 観測の鮮度 最悪 / 平均 |
+|---|---|---|
+| 10(既定) | 0.3 / 100 / 120 ms | 107 / 55 ms |
+| 60 | 40 / 41 / 50 ms | 37 / 24 ms |
+| 200 | 40 / 41 / 45 ms | 37 / 24 ms |
+
+60 FPS 以上で 30 Hz 配信(JointStatePub の既定)どおりの到着になり、200 FPS でも変わらない。
+残る 40 ms は配信周期そのもので、50 Hz ポリシーには 1 周期遅れ相当。
+これは学習環境(8 章)の 25 Hz(2 物理ステップ/行動)で吸収する。
+sim2sim シナリオの `max_obs_age_s` は 0.06 にした。
+
+本体側への提案: 既定 10 FPS はデモ用の値で、ROS 2 連携では常に不利になる。
+`FrameRateController` の既定を 60 に上げるか、`joint_states` の publishRateHz を
+URDF から設定できるようにするのがよい。
+
+## 8. M2 の第一段階: シミュレータで学習し、生成→sim2sim まで通す
+
+GUI は後回しにし、まず「学習したポリシーが同じ配線で配備される」ことを通す。
+
+### 学習環境(`python/src/unirobolab/ros2/unity_env.py`)
+
+- Gymnasium 互換。シミュレータを `set_simulation_state(PAUSED)` にして、
+  1 行動ごとに `step_simulation(N)` で物理を N ステップ進める(壁時計に依存しない)。
+- 観測・行動は `policy_node.py` の `process_obs_term` / `process_action_term` をそのまま使う。
+  学習側と配備側で配線の実装が一つ。
+- `reset_simulation(SCOPE_STATE)` で関節をゼロに戻し、目標を一様乱数で引く。
+- 観測は step 応答の後に届く `joint_states`(30 Hz sim 時間)を待って取る。
+  25 Hz(2 ステップ/行動)なら毎行動で必ず 1 通以上届く。step 応答とトピックは経路が
+  違うので、応答後に最大 200 ms だけ待つ(実測では待ちゼロ)。
+- タスク定義(`*.train.json`)は契約と分ける: 目標範囲、エピソード長、行動あたりの物理ステップ数、
+  報酬項の重み(`tracking_l1` / `tracking_l2` / `action_rate` / `velocity`)。
+
+### 学習器(`python/src/unirobolab/train.py`)
+
+- stable-baselines3 の PPO(MLP 64x64、CPU)。
+- ONNX 書き出しは方策の平均出力(決定論)だけを `features → mlp_extractor.forward_actor → action_net`
+  で包み、契約の `input_name` / `output_name` で `torch.onnx.export`。
+- `progress.csv` にエピソードごとの収益・長さ・最終誤差・報酬項ごとの寄与を書き、
+  `learning_curve.png` に描く。学習後に決定論ロールアウトで `eval.json`。
+
+### 実行(コンテナ内、`SIM_SETTINGS=scripts/train_resources.json` で target_fps 200 / time_scale 10)
+
+```bash
+docker exec -e SIM_SETTINGS=/home/unity/unirobolab/scripts/train_resources.json unirobolab-sim2sim-jazzy \
+    bash /home/unity/unirobolab/scripts/servo_demo_bringup.sh
+PYTHONPATH=python/src:$PYTHONPATH python3 -m unirobolab train contract/examples/servo_demo_rl.json \
+    --config contract/examples/servo_demo_rl.train.json --out generated/runs/servo_demo_rl
+python/.venv/bin/unirobolab gen contract/examples/servo_demo_rl.json --out generated --overwrite   # ホスト
+# 以降は 7 章と同じ sim2sim(契約は servo_demo_rl、25 Hz)
+```
+
+環境の実測スループットは約 18 steps/s(2 物理ステップ/行動)。内訳は step サービスの往復と
+フレーム待ちで、物理そのものではない。複数インスタンスのベクトル化はここがボトルネックになる
+ので、M2 の続きで Unity 側に「N ステップ + 観測をまとめて返す」サービスを足すのが本命。
+
+### 結果(2026-09-16、servo_demo_rl、simulator v1.4.0)
+
+学習は 2 回。1 回目(20k ステップ、SB3 既定の log_std_init=0、std 1 rad)は最終誤差 0.18 rad で
+未収束、sim2sim は ideal_joint の追従で FAIL(0.12〜0.16 rad、目標を超えて止まる)。
+2 回目(40k ステップ、log_std_init=-1.5、std 0.22 rad)は 300 エピソードで収束した。
+
+| 指標 | 1 回目 20k | 2 回目 40k |
+|---|---|---|
+| 学習時間(17.8 steps/s) | 19 分 | 37 分 |
+| 最終 100 エピソードの最終誤差(学習中) | 0.18 rad | 0.054 rad |
+| 決定論評価の整定誤差 | 0.127 rad | 0.026 rad |
+| sim2sim(25 Hz、実時間、target_fps 60) | FAIL(tracking, obs_fresh) | **PASS** |
+
+2 回目の sim2sim: ideal_joint 誤差 4〜9 mrad、cheap_joint 55〜57 mrad(バックラッシ幅 90 mrad の
+半分に張り付く分)、実測周期 25.0 Hz、観測鮮度 最悪 76 ms / 平均 40 ms。
+学習曲線は `docs/images/servo_demo_rl_learning_curve.png`。
+
+これで「契約 → 学習 → ONNX → パッケージ生成 → sim2sim 合格」が同じ配線で一周した。
+学習中の評価(0.026 rad)と sim2sim の追従(0.004〜0.009 rad)が矛盾しないのは、
+学習環境と配備ノードが同じ処理関数で観測・行動を作っている効果。
+
+### 学んだこと
+
+- PPO の初期探索幅は契約の単位で決める。位置目標が rad なら std 1 は広すぎる。
+  `train.log_std_init` を設定項目にした(既定 -1.5)。
+- 25 Hz 契約では 2 周期(80 ms)の鮮度上限が厳しすぎる(30 Hz 配信の位相で最悪 82 ms)。
+  シナリオごとに `max_obs_age_s` を持たせ、理由を `_note` に書く運用にした。
+- 学習環境の観測待ちは「step 応答の後に新着を待つ」と 1 手遅れて 2 秒のタイムアウトを
+  毎回踏む(1 回目の試走で 0.5 steps/s)。step 前の受信通番を覚え、それより新しいものを取る。
+
+### M2 の残り
+
+- GUI(Unity 側): 契約とタスク定義の編集、学習の起動と学習曲線・報酬項の表示、sim2sim 結果の表示
+- スループット: step サービス往復がボトルネック(18 steps/s)。Unity 側に
+  「N ステップ進めて観測を返す」サービスを足すか、複数インスタンスを束ねる
+- `uv` 同梱の学習器の配布(今は派生 Docker イメージで代替)
+- sim2sim 失敗時の原因診断(今は各チェックの理由文まで)

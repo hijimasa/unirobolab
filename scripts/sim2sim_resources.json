@@ -1,0 +1,6 @@
+{
+  "settings": {
+    "physics_hz": 50,
+    "target_fps": 60
+  }
+}

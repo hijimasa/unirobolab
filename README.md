@@ -28,17 +28,19 @@ cd python && uv venv .venv && uv pip install -e ".[dev]" && cd ..
 python/.venv/bin/unirobolab make-test-policy contract/examples/servo_demo.json
 python/.venv/bin/unirobolab gen contract/examples/servo_demo.json --out generated --overwrite
 scripts/sim2sim_container.sh start          # ROS 2 Jazzy + simulator container (needs ../Unity_ROS2_sample)
+scripts/sim2sim_container.sh build          # derived image: + onnxruntime, torch-cpu, stable-baselines3
 ```
 
 Inside the container (`scripts/sim2sim_container.sh shell`): see
 [docs/architecture.md](docs/architecture.md) §7 for the bring-up, build and
 `unirobolab sim2sim` commands. The run ends with a PASS/FAIL table and
-`generated/sim2sim_out/report.json`.
+`generated/sim2sim_out/report.json`. Training (`unirobolab train`) is in §8.
 
 ## Status
 
-M1 done: contract → generated ROS 2 package → sim2sim PASS on the servo demo with a
-wiring-check policy. See [docs/architecture.md](docs/architecture.md) (Japanese) for
+M1 done, M2 first slice done: a policy trained with PPO inside the simulator is exported
+to ONNX, packaged for ROS 2 and passes sim2sim on the servo demo (ideal joint error under
+1 centiradian). GUI and vectorised training are still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
 the design, milestones and results.
 
 ## Layout

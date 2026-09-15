@@ -36,6 +36,29 @@ from std_msgs.msg import Float64MultiArray, String
 SUPPORTED_OBS = {"joint_position", "joint_velocity", "joint_effort", "command", "last_action"}
 
 
+def process_obs_term(v: np.ndarray, spec: dict) -> np.ndarray:
+    """Contract order for observations: deadband -> *scale + offset -> clip."""
+    v = np.asarray(v, dtype=np.float32).copy()
+    db = float(spec.get("deadband", 0.0))
+    if db > 0:
+        v[np.abs(v) < db] = 0.0
+    v = v * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
+    clip = spec.get("clip")
+    if clip:
+        v = np.clip(v, clip[0], clip[1])
+    return v
+
+
+def process_action_term(raw: np.ndarray, spec: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Contract order for actions: clip -> *scale + offset. Returns (clipped_raw, target)."""
+    a = np.asarray(raw, dtype=np.float32).copy()
+    clip = spec.get("clip")
+    if clip:
+        a = np.clip(a, clip[0], clip[1])
+    target = a * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
+    return a, target
+
+
 class PolicyNode(Node):
     def __init__(self) -> None:
         super().__init__("policy_node")
@@ -231,15 +254,7 @@ class PolicyNode(Node):
             if v.shape[0] != n:
                 self.get_logger().error(f"{spec['name']}: got {v.shape[0]} values, expected {n}")
                 return None
-            v = v.astype(np.float32, copy=True)
-            db = float(spec.get("deadband", 0.0))
-            if db > 0:
-                v[np.abs(v) < db] = 0.0
-            v = v * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
-            clip = spec.get("clip")
-            if clip:
-                v = np.clip(v, clip[0], clip[1])
-            frame[off:off + n] = v
+            frame[off:off + n] = process_obs_term(v, spec)
         return frame
 
     def _tick(self) -> None:
@@ -269,12 +284,8 @@ class PolicyNode(Node):
         targets_by_joint: dict[str, float] = {}
         mode = None
         for spec, n, off in self.actions:
-            a = raw[off:off + n].copy()
-            clip = spec.get("clip")
-            if clip:
-                a = np.clip(a, clip[0], clip[1])
-            raw[off:off + n] = a  # last_action sees the clipped raw output
-            a = a * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
+            clipped, a = process_action_term(raw[off:off + n], spec)
+            raw[off:off + n] = clipped  # last_action sees the clipped raw output
             if spec["target"] == "joints":
                 mode = spec["mode"]
                 for j, v in zip(spec.get("joints") or self.joints, a):

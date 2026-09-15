@@ -4,7 +4,7 @@
 # Unity_ROS2_sample/docker/run-docker-container.bash but runs in the background so
 # commands can be sent with `docker exec`.
 #
-#   scripts/sim2sim_container.sh [start|stop|shell] [jazzy|humble]
+#   scripts/sim2sim_container.sh [start|stop|shell|build] [jazzy|humble]
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd)
 sample=${UNITY_ROS2_SAMPLE:-$(cd "$here/../Unity_ROS2_sample" && pwd)}
@@ -12,7 +12,11 @@ action=${1:-start}
 distro=${2:-jazzy}
 case "$distro" in humble) codename=jammy ;; jazzy) codename=noble ;; *) echo "distro?" >&2; exit 1 ;; esac
 name="unirobolab-sim2sim-${distro}"
-image="$(id -un)/ros-${distro}-${codename}-unity-sample"
+base="$(id -un)/ros-${distro}-${codename}-unity-sample"
+image="$(id -un)/unirobolab-${distro}"
+# Use the derived image (docker/Dockerfile: + onnxruntime, torch-cpu, sb3) when built,
+# otherwise fall back to the bare sample image (then pip install onnxruntime inside).
+docker image inspect "$image" >/dev/null 2>&1 || image="$base"
 
 case "$action" in
   start)
@@ -31,5 +35,6 @@ case "$action" in
     ;;
   stop)  docker stop "$name" ;;
   shell) docker exec -it "$name" bash ;;
-  *) echo "usage: $0 [start|stop|shell] [jazzy|humble]" >&2; exit 1 ;;
+  build) docker build --network=host -t "$(id -un)/unirobolab-${distro}" --build-arg BASE="$base" "$here/docker" ;;
+  *) echo "usage: $0 [start|stop|shell|build] [jazzy|humble]" >&2; exit 1 ;;
 esac

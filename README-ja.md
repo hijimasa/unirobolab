@@ -27,15 +27,18 @@ cd python && uv venv .venv && uv pip install -e ".[dev]" && cd ..
 python/.venv/bin/unirobolab make-test-policy contract/examples/servo_demo.json
 python/.venv/bin/unirobolab gen contract/examples/servo_demo.json --out generated --overwrite
 scripts/sim2sim_container.sh start          # ROS 2 Jazzy + シミュレータのコンテナ(../Unity_ROS2_sample が要る)
+scripts/sim2sim_container.sh build          # 派生イメージ: onnxruntime, torch-cpu, stable-baselines3 入り
 ```
 
 コンテナ内の立ち上げ・ビルド・`unirobolab sim2sim` の手順は
 [docs/architecture.md](docs/architecture.md) の 7 章を参照。実行の最後に PASS/FAIL の表と
-`generated/sim2sim_out/report.json` が出る。
+`generated/sim2sim_out/report.json` が出る。学習(`unirobolab train`)は 8 章。
 
 ## 状態
 
-M1 完了: 契約 → ROS 2 パッケージ生成 → servo_demo での sim2sim PASS(配線確認ポリシー)。
+M1 完了、M2 の第一段階完了: シミュレータ内で PPO 学習したポリシーを ONNX に書き出し、
+ROS 2 パッケージ化して servo_demo の sim2sim に合格(ideal_joint 誤差 1 センチラジアン未満)。
+GUI とベクトル化学習はこれから。
 設計・マイルストーン・結果は [docs/architecture.md](docs/architecture.md) を参照。
 
 ## 構成

@@ -23,11 +23,17 @@ rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null
 source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash"
 source /home/unity/colcon_ws/install/setup.sh
 
-nohup ros2 run ros_tcp_endpoint default_server_endpoint --ros-args -p ROS_IP:=0.0.0.0 > /tmp/endpoint.log 2>&1 &
+nohup ros2 run ros_tcp_endpoint default_server_endpoint --ros-args -p ROS_IP:=0.0.0.0 > /tmp/endpoint.log 2>&1 < /dev/null &
 sleep 5
 
 export DISPLAY=${DISPLAY:-:1} XAUTHORITY=/.Xauthority
-cd "$SIM_DIR" && nohup ./Unity_ROS2_Robot_Simulator.x86_64 > /tmp/sim_bringup.log 2>&1 &
+# Pacing. The player defaults to 10 FPS (FrameRateController), which makes Unity run
+# five 50 Hz physics steps back-to-back per frame: joint_states then leave in bursts of
+# three every 100 ms and commands are consumed once per frame. target_fps lifts that.
+export SIMULATION_RESOURCES_CONFIG=${SIM_SETTINGS:-/home/unity/unirobolab/scripts/sim2sim_resources.json}
+# exec inside the subshell so no bash lingers holding this script's stdout open:
+# a caller that pipes this script (e.g. `| tail`) would otherwise never see EOF.
+( cd "$SIM_DIR" && exec ./Unity_ROS2_Robot_Simulator.x86_64 ) > /tmp/sim_bringup.log 2>&1 < /dev/null &
 sleep 14
 
 timeout 30 ros2 run simulation_ros2_utils set_sim_state --ros-args -p set_state:=start 2>&1 | tail -1

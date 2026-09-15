@@ -1,11 +1,27 @@
 {
-  "_note": "max_obs_age_s is 0.12 because joint_states from the simulator arrive through ROS-TCP-Endpoint in bursts about every 100 ms (measured 2026-09-16: p50 gap 0.3 ms, p95 100 ms). A 50 Hz policy therefore sees observations up to ~100 ms old; the training side must model that delay or the transport must be fixed.",
-  "goals": [[0.5, 0.5], [-0.5, -0.5], [0.0, 0.0]],
+  "_note": "max_obs_age_s 0.06: joint_states publish at 30 Hz sim-time (JointStatePub default), so a 50 Hz policy sees states up to ~40 ms old even when the simulator is paced properly. The simulator must run with target_fps >= 60 (scripts/sim2sim_resources.json); at its 10 FPS default, five physics steps run back-to-back per frame and states arrive in 100 ms bursts (measured 2026-09-16: p95 gap 100 ms -> 41 ms at 60 FPS).",
+  "goals": [
+    [
+      0.5,
+      0.5
+    ],
+    [
+      -0.5,
+      -0.5
+    ],
+    [
+      0.0,
+      0.0
+    ]
+  ],
   "hold_s": 4.0,
   "settle_window_s": 1.0,
   "warmup_s": 3.0,
   "default_tolerance": 0.1,
-  "tolerance": { "ideal_joint": 0.05, "cheap_joint": 0.12 },
+  "tolerance": {
+    "ideal_joint": 0.05,
+    "cheap_joint": 0.12
+  },
   "rate_tolerance": 0.15,
-  "max_obs_age_s": 0.12
+  "max_obs_age_s": 0.06
 }

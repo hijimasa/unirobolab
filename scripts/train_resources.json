@@ -1,0 +1,7 @@
+{
+  "settings": {
+    "physics_hz": 50,
+    "target_fps": 200,
+    "time_scale": 10
+  }
+}

@@ -68,7 +68,7 @@ def cmd_sim2sim(a) -> int:
 
 def cmd_train(a) -> int:
     from unirobolab import train
-    return train.run(a.contract, a.backend)
+    return train.run(a.contract, a.config, a.out, a.backend)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -106,12 +106,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", default="sim2sim_out", help="report directory")
     s.set_defaults(fn=cmd_sim2sim)
 
-    s = sub.add_parser("train", help="training backend (not implemented)")
-    s.add_argument("contract"); s.add_argument("--backend", default="unity", choices=["unity"])
+    s = sub.add_parser("train", help="train a policy for the contract (needs ROS 2 + the simulator)")
+    add_contract(s)
+    s.add_argument("--config", required=True, help="task/train JSON (goal range, reward terms, PPO settings)")
+    s.add_argument("--out", required=True, help="run directory (policy.onnx, progress.csv, ...)")
+    s.add_argument("--backend", default="unity", choices=["unity"])
     s.set_defaults(fn=cmd_train)
 
     a = p.parse_args(argv)
-    if hasattr(a, "contract") and getattr(a, "schema", None) is None and a.cmd != "train":
+    if hasattr(a, "contract") and getattr(a, "schema", None) is None:
         a.schema = _default_schema(a.contract)
     try:
         return a.fn(a)
