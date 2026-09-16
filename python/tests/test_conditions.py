@@ -57,7 +57,7 @@ def test_taskspec_link_target_generates_conditions_contract(tmp_path):
     c, t = generate(spec, str(tmp_path))
     srcs = [o["source"] for o in c["observations"]]
     assert srcs == ["joint_position", "joint_velocity", "link_position", "link_goal", "last_action"]
-    assert c["observations"][2]["point"] == [0.0, 0.0, -0.06]     # visual origin of the arm link by default
+    assert c["observations"][2]["point"] == [0.0, 0.0, -0.12]     # far end of the arm's visual by default
     assert t["task"]["type"] == "conditions" and t["task"]["conditions"][0]["kind"] == "link_near"
     assert t["train"]["early_stop"]["metric"] == "success_rate"
     p = tmp_path / "c.json"; p.write_text(json.dumps(c))

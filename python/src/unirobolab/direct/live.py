@@ -43,7 +43,7 @@ class LivePolicy:
         self.index = [st.names.index(j) for j in c.joints]
         self.act_term = [t for t in c.actions if t.source == "joints"][0]
         self.act_joints = self.act_term.joints or c.joints
-        cmds = c.obs_terms_by_source("command") + c.obs_terms_by_source("base_goal_xy")
+        cmds = c.obs_terms_by_source("command") + c.obs_terms_by_source("base_goal_xy") + c.obs_terms_by_source("link_goal")
         self.goal_size = cmds[0].size if cmds else 0
         self.goal = np.zeros(self.goal_size, np.float32)
         if goal is not None:
@@ -93,6 +93,10 @@ class LivePolicy:
             elif s == "base_goal_xy":
                 d = np.array([self.goal[0] - st.base_pos[0], self.goal[1] - st.base_pos[1], 0.0])
                 v = (quat_to_rot(st.base_quat).T @ d)[:2]
+            elif s in ("link_position", "link_goal"):
+                from unirobolab.fk import fk_point
+                p = fk_point(t.spec["chain"], {n: float(q) for n, q in zip(st.names, st.position)}, t.spec.get("point"))
+                v = p if s == "link_position" else self.goal[:3] - p
             else:
                 raise ValueError(f"observation source {s!r} not supported")
             frame[t.offset:t.end] = process_obs_term(v, t.spec)
@@ -122,6 +126,12 @@ class LivePolicy:
             return None
         if self.c.obs_terms_by_source("base_goal_xy"):
             return float(np.linalg.norm(self.goal[:2] - self.state.base_pos[:2]))
+        lg = self.c.obs_terms_by_source("link_goal")
+        if lg:
+            from unirobolab.fk import fk_point
+            st = self.state
+            p = fk_point(lg[0].spec["chain"], {n: float(q) for n, q in zip(st.names, st.position)}, lg[0].spec.get("point"))
+            return float(np.linalg.norm(self.goal[:3] - p))
         q = self._joint("position")[[self.c.joints.index(j) for j in self.act_joints]]
         return float(np.mean(np.abs(q - self.goal[: len(self.act_joints)])))
 
@@ -168,7 +178,8 @@ def run(c: Contract, entity: str, onnx_path: str, host: str, port: int, goal: li
             if now - last_status >= 1.0:
                 print(json.dumps({"t": round(now - t0, 1), "rate_hz": ticks / (now - last_status),
                                   "err": lp.error_to_goal(), "goal": lp.goal.tolist(),
-                                  "base": bool(lp.c.obs_terms_by_source("base_goal_xy"))}), flush=True)
+                                  "base": bool(lp.c.obs_terms_by_source("base_goal_xy")),
+                                  "kind": "base" if lp.c.obs_terms_by_source("base_goal_xy") else ("link" if lp.c.obs_terms_by_source("link_goal") else "joint")}), flush=True)
                 ticks = 0; last_status = now
     finally:
         stop.set()

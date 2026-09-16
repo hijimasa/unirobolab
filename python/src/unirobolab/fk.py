@@ -34,15 +34,31 @@ def load_tree(urdf_path: str) -> dict[str, Any]:
                          "axis": _floats(axis.get("xyz") if axis is not None else "1 0 0", 3)}
         children.add(child)
     roots = [l for l in links if l not in children]
-    # 先端の目安: リンクの visual (無ければ collision) の原点。手先を「リンクの点」で指すときの既定
+    # 先端の目安: リンクの visual (無ければ collision) の形状の、原点から見て一番遠い端。
+    # 箱・円柱は最長軸 (原点のずれの向き) の端、球や不明な形状は原点。手先を「リンクの点」で指すときの既定
     tips: dict[str, list[float]] = {}
     for l in root.findall("link"):
         for tag in ("visual", "collision"):
             g = l.find(tag)
-            if g is not None:
-                o = g.find("origin")
-                tips[l.get("name")] = _floats(o.get("xyz") if o is not None else None, 3)
-                break
+            if g is None:
+                continue
+            o = g.find("origin")
+            origin = np.asarray(_floats(o.get("xyz") if o is not None else None, 3))
+            geom = g.find("geometry")
+            ext = np.zeros(3)
+            if geom is not None:
+                box = geom.find("box"); cyl = geom.find("cylinder")
+                if box is not None:
+                    ext = 0.5 * np.asarray(_floats(box.get("size"), 3))
+                elif cyl is not None:
+                    ext = np.array([0.0, 0.0, 0.5 * float(cyl.get("length", 0.0))])
+            tip = origin.copy()
+            if np.any(ext > 0):
+                axis = int(np.argmax(np.where(ext > 0, np.abs(origin) + ext, -1.0)))   # 原点のずれが大きく伸びている軸
+                sign = np.sign(origin[axis]) if abs(origin[axis]) > 1e-6 else 1.0
+                tip[axis] = origin[axis] + sign * ext[axis]
+            tips[l.get("name")] = [round(float(v), 4) for v in tip]
+            break
     return {"root": roots[0] if roots else (links[0] if links else ""), "joints": joints, "links": links, "tips": tips}
 
 

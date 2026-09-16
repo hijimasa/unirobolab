@@ -133,6 +133,10 @@ def estimate_time_s(spec: dict[str, Any], env_steps_per_s: float = 1500.0) -> tu
         tol = float(c.get("tolerance", 0.15))
         steps = 200000 * (0.15 / max(tol, 1e-3)) ** 1.0
         why = f"地点到達、許容 {tol:g} m、{n_envs} 体並列"
+    elif c.get("type") == "link_near":
+        tol = float(c.get("tolerance", 0.03))
+        steps = 60000 * (0.03 / max(tol, 1e-3)) ** 1.2   # servo の手先 (許容 3 cm) で 5.2 万ステップ
+        why = f"手先を領域へ、許容 {tol:g} m、{n_envs} 体並列"
     else:
         tol = float(c.get("tolerance", 0.05))
         steps = 130000 * (0.05 / max(tol, 1e-3)) ** 1.3
