@@ -706,7 +706,7 @@ Contract タブの「Draft from URDF」が同じものを呼んでエディタ�
   シナリオの入力と report.json の生の要約は「詳細」のときだけ見える。
   `SIM_CHECK_AUTORUN=<report.json>` でヘッドレスに表示内容をログへ出せる。
   `SIM_GUI_SCREENSHOT=<png>` を付けて窓ありで起動すると 8 秒後に画面を保存する(見た目の確認用。
-  この機械の DISPLAY=:1 で確認済み、docs/images/gui_check_tab.png)。
+  この機械の DISPLAY=:1 で確認済み、docs/images/gui_check_tab.png と gui_task_tab.png)。
 - 日本語表示: プロジェクトは CJK フォントを同梱しないので、起動時に OS のフォント
   (Noto Sans CJK JP / Yu Gothic / Meiryo / Hiragino / Droid Sans Fallback など) から
   `TMP_FontAsset.CreateFontAsset(family, style, 24)` で動的フォントを作り TMP のフォールバックに
