@@ -56,7 +56,7 @@ public class PhaseTry : Phase
         foreach (GameObject e in buf) if (e != null) { m_Entity = e.name; break; }
         if (string.IsNullOrEmpty(m_Entity) && W.Sim.CanSpawnFromGui)
         {
-            if (W.Sim.TrySpawnRobotFromUrdf(P.Abs(P.D.urdf), out string name, out _)) m_Entity = name;
+            if (W.Sim.TrySpawnRobotFromUrdf(P.Abs(P.D.urdf), out string name, out _)) { m_Entity = name; W.PlaceSpawned(name); }
         }
         var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
         Transform root = EntityRoot();

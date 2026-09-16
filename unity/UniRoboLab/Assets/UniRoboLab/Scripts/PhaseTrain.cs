@@ -13,11 +13,12 @@ public class PhaseTrain : Phase
     public override string Title => Ui.T("③ 学習", "3 Train");
 
     Button m_Start, m_Stop, m_Back2;
-    TMP_Text m_Progress, m_Log, m_Hint;
+    TMP_Text m_Progress, m_Log, m_Hint, m_AxisTop, m_AxisBottom;
     RawImage m_Curve; Texture2D m_CurveTex; int m_CurvePoints;
     ExternalProcess m_Train, m_StatusProc;
     string m_RunDir; float m_StatusNextAt; bool m_Finished;
     readonly StringBuilder m_LogBuf = new StringBuilder();
+    StreamWriter m_LogFile;   // <run>/train.log: 学習器の出力を残す (失敗の原因を後で追える)
 
     public override void Build(RectTransform main, RectTransform details)
     {
@@ -27,9 +28,12 @@ public class PhaseTrain : Phase
         m_Stop = Ui.Btn(r.transform, Ui.T("■ 止める", "■ Stop"), StopTraining, 110f, 30f);
         Ui.SetBtn(m_Start, null, Ui.BtnActive);
         m_Progress = Ui.Label(Root.transform, "", 13f, Ui.Text, true, 60f);
+        m_AxisTop = Ui.Label(Root.transform, "", 11f, Ui.Muted);
         m_CurveTex = Ui.DarkTexture(560, 150);
         m_Curve = Ui.Image(Root.transform, m_CurveTex, 150f);
-        Ui.Label(Root.transform, Ui.T("青: 試行ごとの誤差   緑: 成功率 (移動平均)", "blue: error per attempt   green: success rate (moving average)"), 10f, Ui.Muted);
+        m_AxisBottom = Ui.Label(Root.transform, "", 11f, Ui.Muted, true, 46f);
+        m_AxisBottom.text = Ui.T("横軸: 試行の順 (左が最初)。青の点: その試行の終わりに目標からどれだけ離れていたか。橙の線: 成功とみなす誤差 (この線より下なら成功)。緑の線: 直近の試行で成功した割合 (右端の目盛 0〜100 %)",
+                                "x: attempts in order (first on the left). Blue dots: distance from the goal at the end of each attempt. Orange line: the error that counts as success (below it = success). Green line: share of recent attempts that succeeded (right scale 0-100 %)");
         m_Hint = Ui.Label(Root.transform, "", 12f, Ui.Warn, true, 44f);
         m_Back2 = Ui.Btn(Root.transform, Ui.T("② に戻って条件を変える", "Back to step 2 to change the task"), () => W.GoTo(1, false), 260f, 26f);
         m_Back2.gameObject.SetActive(false);
@@ -77,15 +81,23 @@ public class PhaseTrain : Phase
         cmd.Append(W.Py).Append(" -u -m unirobolab train ").Append(ExternalProcess.Quote(P.Abs(P.D.contract)))
            .Append(" --config ").Append(ExternalProcess.Quote(P.Abs(P.D.train))).Append(" --out ").Append(ExternalProcess.Quote(m_RunDir))
            .Append(" --transport direct --port ").Append(Env.LearningPort()).Append(" --n-envs ").Append(Mathf.Max(1, spec.training.n_envs))
-           .Append(" --spawn-urdf ").Append(ExternalProcess.Quote(P.Abs(P.D.urdf))).Append(" --spawn-spacing 0.6 2>&1");
+           .Append(" --spawn-urdf ").Append(ExternalProcess.Quote(P.Abs(P.D.urdf))).Append(" --spawn-spacing 0.6 --spawn-layout grid --spawn-yaw ").Append(W.StartYawRad.ToString("F5"))
+           .Append(" --spawn-origin ").Append(W.StartX.ToString("F3")).Append(' ').Append(W.StartY.ToString("F3")).Append(" 2>&1");
+        Directory.CreateDirectory(m_RunDir);
+        try { m_LogFile?.Dispose(); m_LogFile = new StreamWriter(Path.Combine(m_RunDir, "train.log"), false) { AutoFlush = true }; m_LogFile.WriteLine("$ " + cmd); } catch (Exception) { m_LogFile = null; }
         m_Train = W.Launch(cmd.ToString());
         m_Finished = false; m_CurvePoints = 0; m_StatusNextAt = 0f; m_LogBuf.Clear(); m_Hint.text = ""; m_Back2.gameObject.SetActive(false);
         m_Progress.text = Ui.T("学習を始めています...", "starting...");
         m_Start.interactable = false;
         W.Status(Ui.T("学習中", "training"));
         var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
-        // 学習器は ROS の y 方向 (= Unity の -x) に 0.6 m 間隔で並べる。列の中央を狙う
-        if (cam != null) { cam.target = new Vector3(-0.6f * (spec.training.n_envs - 1) * 0.5f, 0.15f, 0f); cam.distance = 1.0f + 0.55f * spec.training.n_envs; }
+        // 学習器は 0.6 m 間隔の格子 (ceil(sqrt(n)) 列; ROS x = Unity z, ROS y = Unity -x) に並べる。格子の中央を狙う
+        if (cam != null)
+        {
+            int n = Mathf.Max(1, spec.training.n_envs); int cols = Mathf.CeilToInt(Mathf.Sqrt(n)); int rows = Mathf.CeilToInt(n / (float)cols);
+            cam.target = new Vector3(-W.StartY - 0.6f * (cols - 1) * 0.5f, 0.15f, W.StartX + 0.6f * (rows - 1) * 0.5f);
+            cam.distance = 1.2f + 0.7f * Mathf.Max(cols, rows);
+        }
     }
 
     public void StopTraining()
@@ -99,11 +111,13 @@ public class PhaseTrain : Phase
     {
         if (m_Train != null)
         {
-            while (m_Train.TryDequeue(out string l)) { m_LogBuf.AppendLine(l); if (m_LogBuf.Length > 6000) m_LogBuf.Remove(0, 2000); }
+            while (m_Train.TryDequeue(out string l)) { m_LogBuf.AppendLine(l); m_LogFile?.WriteLine(l); if (m_LogBuf.Length > 6000) m_LogBuf.Remove(0, 2000); }
             if (m_Log != null && m_Log.gameObject.activeInHierarchy) m_Log.text = m_LogBuf.ToString();
             if (m_Train.HasExited)
             {
+                m_Train.WaitForExit(); while (m_Train.TryDequeue(out string l2)) { m_LogBuf.AppendLine(l2); m_LogFile?.WriteLine(l2); }
                 int code = m_Train.ExitCode; m_Train = null; m_Start.interactable = true;
+                m_LogFile?.WriteLine($"[exit {code}]"); m_LogFile?.Dispose(); m_LogFile = null;
                 if (code == 0 && File.Exists(Path.Combine(m_RunDir, "policy.onnx")))
                 {
                     P.D.run_dir = P.Rel(m_RunDir); P.Stamp("run"); P.Save(); m_Finished = true;
@@ -167,12 +181,17 @@ public class PhaseTrain : Phase
         catch (IOException) { return; }
         if (err.Count == 0 || err.Count == m_CurvePoints) return;
         m_CurvePoints = err.Count;
+        TaskSpec spec = TaskSpec.Load(P.Abs(P.D.task));
+        float tol = spec.Goal0.tolerance > 0f ? spec.Goal0.tolerance : 0.05f;
+        // 成功 = 許容誤差以内 (status.py と同じ定義。CSV の success 列は地点到達の学習器だけが立てる)
+        bool anyFlag = false; foreach (float f in suc) if (f > 0f) { anyFlag = true; break; }
+        if (!anyFlag) for (int i = 0; i < suc.Count; i++) suc[i] = err[i] <= tol ? 1f : 0f;
         int win = Mathf.Max(10, err.Count / 10);
         var rate = new List<float>(err.Count); float acc = 0f;
         for (int i = 0; i < suc.Count; i++) { acc += suc[i]; if (i >= win) acc -= suc[i - win]; rate.Add(acc / Mathf.Min(win, i + 1)); }
         int w = m_CurveTex.width, h = m_CurveTex.height;
         var px = new Color32[w * h]; for (int i = 0; i < px.Length; i++) px[i] = new Color32(20, 20, 24, 255);
-        void Plot(List<float> v, Color32 c, float lo, float hi)
+        void Plot(List<float> v, Color32 c, float lo, float hi, int thick)
         {
             if (hi - lo < 1e-6f) hi = lo + 1e-6f;
             for (int x = 0; x < w; x++)
@@ -180,12 +199,21 @@ public class PhaseTrain : Phase
                 int i0 = x * v.Count / w, i1 = Mathf.Min(v.Count, (x + 1) * v.Count / w); if (i1 <= i0) i1 = i0 + 1;
                 float m = 0f; for (int i = i0; i < i1 && i < v.Count; i++) m += v[i]; m /= (i1 - i0);
                 int y = Mathf.Clamp((int)((m - lo) / (hi - lo) * (h - 1)), 0, h - 1);
-                px[y * w + x] = c; if (y > 0) px[(y - 1) * w + x] = c;
+                for (int t = 0; t < thick; t++) if (y - t >= 0) px[(y - t) * w + x] = c;
             }
         }
-        float eHi = 0f; foreach (float e in err) eHi = Mathf.Max(eHi, e);
-        Plot(rate, new Color32(90, 220, 120, 255), 0f, 1f); Plot(err, new Color32(90, 160, 255, 255), 0f, eHi);
+        // 縦軸: 誤差 0 〜 eHi。目標付近が見えるように上限は目標の 5 倍まで (それより大きい初期の誤差は上端に張り付く)
+        float eMax = 0f; foreach (float e in err) eMax = Mathf.Max(eMax, e);
+        float eHi = Mathf.Clamp(eMax, tol * 3f, tol * 5f);
+        for (int gy = 1; gy < 4; gy++) { int y = gy * h / 4; for (int x = 0; x < w; x += 3) px[y * w + x] = new Color32(50, 50, 58, 255); }   // 薄い横罫線
+        int yTol = Mathf.Clamp((int)(tol / eHi * (h - 1)), 0, h - 1);
+        for (int x = 0; x < w; x++) { px[yTol * w + x] = new Color32(255, 170, 60, 255); if (yTol + 1 < h) px[(yTol + 1) * w + x] = new Color32(255, 170, 60, 255); }
+        Plot(rate, new Color32(90, 220, 120, 255), 0f, 1f, 3); Plot(err, new Color32(90, 160, 255, 255), 0f, eHi, 2);
         m_CurveTex.SetPixels32(px); m_CurveTex.Apply();
+        bool isBase = spec.Goal0.type == "base_in_region"; string unit = isBase ? "m" : "rad";
+        float last = rate.Count > 0 ? rate[rate.Count - 1] : 0f;
+        m_AxisTop.text = Ui.T($"縦軸: 誤差 0 〜 {eHi:F2} {unit}   橙の線: 成功の目標 {tol:g} {unit}   緑: 成功率 (今 {last * 100f:F0} %)   試行 {err.Count} 回",
+                              $"y: error 0 to {eHi:F2} {unit}   orange: success target {tol:g} {unit}   green: success rate (now {last * 100f:F0} %)   {err.Count} attempts");
     }
 
     public override bool CanProceed(out string reason) { reason = ""; return true; }   // ④ は任意 (⑤ の前提は学習結果)

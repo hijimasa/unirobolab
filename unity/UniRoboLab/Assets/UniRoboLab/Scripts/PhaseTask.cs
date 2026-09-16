@@ -13,7 +13,8 @@ public class PhaseTask : Phase
     TaskSpec m_Spec;
     bool m_IsBase;
     TMP_Text m_Kind, m_RangeL, m_TolL, m_TimeL, m_RMinL, m_RMaxL, m_Estimate, m_TrainText;
-    Slider m_Range, m_Tol, m_Time, m_RMin, m_RMax;
+    Slider m_Range, m_Tol, m_Time, m_RMin, m_RMax, m_Yaw;
+    TMP_InputField m_StartX, m_StartY; TMP_Text m_YawL;
     GameObject m_JointBox, m_BaseBox;
     Ui.Choice m_RangeMode;
     ExternalProcess m_Gen, m_Est;
@@ -26,7 +27,13 @@ public class PhaseTask : Phase
     {
         Root = Ui.Column(main, "Task", 6f);
         m_Kind = Ui.Label(Root.transform, "", 13f, Ui.Header);
-        Ui.Label(Root.transform, Ui.T("開始: ロボットは今の姿勢・位置から (v1 では固定)", "Start: the robot's current pose and position (fixed in v1)"), 12f, Ui.Muted);
+        Ui.Label(Root.transform, Ui.T("開始の位置と向き (ロボットはここからスタート。学習・チェックでも同じ)", "Start pose (used for training and the check as well)"), 12f, Ui.Muted);
+        var sp = Ui.Row(Root.transform, 26f);
+        Ui.Label(sp.transform, "x [m]", 12f, Ui.Text, false, 0f, 44f); m_StartX = Ui.Input(sp.transform, "0", 24f);
+        Ui.Label(sp.transform, "y [m]", 12f, Ui.Text, false, 0f, 44f); m_StartY = Ui.Input(sp.transform, "0", 24f);
+        m_YawL = Ui.Label(sp.transform, "", 12f, Ui.Text, false, 0f, 130f);
+        m_Yaw = Ui.Slider(Root.transform, -180f, 180f, 180f, v => { m_YawL.text = Ui.T($"向き {v:F0}°", $"yaw {v:F0}°"); TouchStart(); }, true);
+        m_StartX.onEndEdit.AddListener(_ => TouchStart()); m_StartY.onEndEdit.AddListener(_ => TouchStart());
         Ui.Label(Root.transform, Ui.T("終了 (成功) の条件", "Goal (success) condition"), 12f, Ui.Muted);
         // joints_near
         m_JointBox = Ui.Column(Root.transform, "Joint", 4f, 0, false);
@@ -59,6 +66,18 @@ public class PhaseTask : Phase
 
     void Touch() { m_EstAt = Time.realtimeSinceStartup + 0.6f; DrawGoal(); }
 
+    /// <summary>開始の位置・向きを仕様に書き、プレビューのロボットをそこへ置く。</summary>
+    void TouchStart()
+    {
+        if (m_Spec == null) return;
+        float.TryParse(m_StartX.text, out float x); float.TryParse(m_StartY.text, out float y);
+        m_Spec.start.@base.xy = new[] { x, y }; m_Spec.start.@base.yaw_deg = new[] { m_Yaw.value, m_Yaw.value };
+        m_Spec.Save(P.Abs(P.D.task));
+        var buf = new List<GameObject>(); W.Sim.GetEntitiesSnapshot(buf);
+        foreach (GameObject e in buf) if (e != null) { W.PlaceSpawned(e.name, x, y, m_Yaw.value); break; }
+        DrawGoal();
+    }
+
     public override bool CanEnter(out string reason)
     {
         reason = Ui.T("先に ① でロボットを読み込んでください", "load the robot in step 1 first");
@@ -79,6 +98,9 @@ public class PhaseTask : Phase
         if (m_IsBase) { m_RMin.value = g.region.r_min; m_RMax.value = g.region.r_max; }
         else { bool manual = g.range != null && g.range.Length == 2; m_RangeMode.Set(manual ? 1 : 0); if (manual) m_Range.value = Mathf.Max(Mathf.Abs(g.range[0]), Mathf.Abs(g.range[1])); }
         m_Tol.onValueChanged.Invoke(m_Tol.value); m_Time.onValueChanged.Invoke(m_Time.value);
+        var sb = m_Spec.start.@base;
+        m_StartX.text = (sb.xy != null && sb.xy.Length > 0 ? sb.xy[0] : 0f).ToString("F2"); m_StartY.text = (sb.xy != null && sb.xy.Length > 1 ? sb.xy[1] : 0f).ToString("F2");
+        m_Yaw.SetValueWithoutNotify(sb.yaw_deg != null && sb.yaw_deg.Length > 0 ? sb.yaw_deg[0] : 180f); m_YawL.text = Ui.T($"向き {m_Yaw.value:F0}°", $"yaw {m_Yaw.value:F0}°");
         DrawGoal();
         RefreshDetails();
         W.Status(Ui.T("成功の条件と制限時間を決めて「次へ」", "Set the success condition and the time limit, then Next"));
@@ -148,10 +170,11 @@ public class PhaseTask : Phase
         if (!m_IsBase) { if (m_RingIn != null) { m_RingIn.enabled = false; m_RingOut.enabled = false; } DrawJointArcs(); return; }
         foreach (LineRenderer a in m_Arcs) a.enabled = false;
         if (m_RingIn == null) { m_RingIn = MakeRing("GoalRingIn"); m_RingOut = MakeRing("GoalRingOut"); }
-        Ring(m_RingIn, m_RMin.value); Ring(m_RingOut, m_RMax.value);
+        Vector3 c0 = new Vector3(-W.StartY, 0f, W.StartX);
+        Ring(m_RingIn, m_RMin.value, c0); Ring(m_RingOut, m_RMax.value, c0);
         m_RingIn.enabled = m_RingOut.enabled = true;
         var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
-        if (cam != null) { cam.target = Vector3.zero; cam.distance = Mathf.Max(3f, m_RMax.value * 2.2f); }
+        if (cam != null) { cam.target = c0; cam.distance = Mathf.Max(3f, m_RMax.value * 2.2f); }
     }
 
     static LineRenderer MakeRing(string name)
@@ -164,10 +187,10 @@ public class PhaseTask : Phase
         return lr;
     }
 
-    static void Ring(LineRenderer lr, float r)
+    static void Ring(LineRenderer lr, float r, Vector3 c)
     {
         const int n = 64; lr.positionCount = n;
-        for (int i = 0; i < n; i++) { float a = i * Mathf.PI * 2f / n; lr.SetPosition(i, new Vector3(Mathf.Cos(a) * r, 0.02f, Mathf.Sin(a) * r)); }
+        for (int i = 0; i < n; i++) { float a = i * Mathf.PI * 2f / n; lr.SetPosition(i, c + new Vector3(Mathf.Cos(a) * r, 0.02f, Mathf.Sin(a) * r)); }
     }
 
     /// <summary>プレビューのロボット (① でスポーン) の回転関節ごとに、目標角の範囲を弧で描く。</summary>

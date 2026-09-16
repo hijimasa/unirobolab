@@ -103,7 +103,7 @@ public class PhaseCheck : Phase
         foreach (GameObject e in buf) if (e != null) W.Sim.TryDeleteEntityByName(e.name);
         if (m_SavedScale < 0f) { m_SavedScale = SimulationControl.ConfiguredTimeScale; SimulationControl.ConfiguredTimeScale = 1f; if (Time.timeScale > 1f) Time.timeScale = 1f; }
         string ns = string.IsNullOrEmpty(P.D.ns) ? "robot" : P.D.ns;
-        string envs = $"CONTRACT={ExternalProcess.Quote(contract)} ONNX={ExternalProcess.Quote(onnx)} URDF={ExternalProcess.Quote(urdf)} TASK={ExternalProcess.Quote(task ?? "")} OUT={ExternalProcess.Quote(outDir)} NS={ExternalProcess.Quote(ns)}";
+        string envs = $"CONTRACT={ExternalProcess.Quote(contract)} ONNX={ExternalProcess.Quote(onnx)} URDF={ExternalProcess.Quote(urdf)} TASK={ExternalProcess.Quote(task ?? "")} OUT={ExternalProcess.Quote(outDir)} NS={ExternalProcess.Quote(ns)} SPAWN_YAW={W.StartYawRad:F5} SPAWN_X={W.StartX:F3} SPAWN_Y={W.StartY:F3}";
         string cmd = Env.Ros2 == "container"
             ? $"docker exec {ContainerName} env {envs} bash {ExternalProcess.Quote(Path.Combine(Env.RepoRoot, "scripts", "check_runner.sh"))} 2>&1"
             : $"env {envs} bash {ExternalProcess.Quote(Path.Combine(Env.RepoRoot, "scripts", "check_runner.sh"))} 2>&1";

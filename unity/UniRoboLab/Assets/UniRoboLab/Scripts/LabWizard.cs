@@ -34,6 +34,30 @@ public class LabWizard : MonoBehaviour
 
     public enum PreviewMode { Side, Large, Hidden }
 
+    /// <summary>開始の位置と向き (task.json の start.base、ROS 座標: x 前, y 左, yaw 反時計回り [deg])。①〜⑤ で共通。</summary>
+    public float StartX { get { var b = TaskSpec.Load(P.Abs(P.D.task)).start.@base; return b.xy != null && b.xy.Length > 0 ? b.xy[0] : 0f; } }
+    public float StartY { get { var b = TaskSpec.Load(P.Abs(P.D.task)).start.@base; return b.xy != null && b.xy.Length > 1 ? b.xy[1] : 0f; } }
+    public float StartYawDeg { get { var b = TaskSpec.Load(P.Abs(P.D.task)).start.@base; return b.yaw_deg != null && b.yaw_deg.Length > 0 ? b.yaw_deg[0] : 180f; } }
+    public float StartYawRad => StartYawDeg * Mathf.Deg2Rad;
+
+    /// <summary>GUI でスポーンしたロボットを開始の位置と向きへ置く (核の GUI スポーンは姿勢を取らない)。</summary>
+    public void PlaceSpawned(string entityName) => PlaceSpawned(entityName, StartX, StartY, StartYawDeg);
+
+    public void PlaceSpawned(string entityName, float rosX, float rosY, float yawDeg)
+    {
+        var buf = new List<GameObject>(); Sim.GetEntitiesSnapshot(buf);
+        Vector3 pos = new Vector3(-rosY, 0f, rosX);                 // ROS (x, y) → Unity (-y, ·, x)
+        Quaternion rot = Quaternion.Euler(0f, -yawDeg, 0f);        // ROS の yaw (反時計回り) → Unity の y 回転
+        foreach (GameObject e in buf)
+        {
+            if (e == null || e.name != entityName) continue;
+            foreach (ArticulationBody ab in e.GetComponentsInChildren<ArticulationBody>())
+                if (ab.isRoot) { Vector3 p = ab.transform.position; ab.TeleportRoot(new Vector3(pos.x, p.y, pos.z), rot); return; }
+            e.transform.SetPositionAndRotation(new Vector3(pos.x, e.transform.position.y, pos.z), rot);
+            return;
+        }
+    }
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Bootstrap()
     {
@@ -141,7 +165,9 @@ public class LabWizard : MonoBehaviour
         if (index != m_Current && index > 0 && !m_Phases[index].CanEnter(out string why))
         {
             if (!silent) Status(why, Ui.Warn);
-            return;
+            if (m_Current >= 0) return;
+            index = ResumePhase();   // 起動時に入れないフェーズを指定された: 前提の揃うところへ
+            if (index > 0 && !m_Phases[index].CanEnter(out _)) index = 0;
         }
         if (m_Current >= 0 && m_Root != null) { m_Phases[m_Current].Leave(); m_Phases[m_Current].Root.SetActive(false); if (m_Phases[m_Current].DetailsRoot != null) m_Phases[m_Current].DetailsRoot.SetActive(false); }
         m_Current = index;
@@ -160,7 +186,7 @@ public class LabWizard : MonoBehaviour
 
     public void RefreshStepper()
     {
-        if (m_Root == null) return;
+        if (m_Root == null || m_Current < 0) return;
         m_ProjectLabel.text = Ui.T("プロジェクト: ", "project: ") + P.Dir;
         for (int i = 0; i < m_Phases.Count; i++)
         {

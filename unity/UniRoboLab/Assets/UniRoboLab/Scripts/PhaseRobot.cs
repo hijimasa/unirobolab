@@ -83,7 +83,7 @@ public class PhaseRobot : Phase
     {
         if (W.Sim == null || !W.Sim.CanSpawnFromGui) return;
         if (!string.IsNullOrEmpty(m_SpawnedName)) W.Sim.TryDeleteEntityByName(m_SpawnedName);
-        if (W.Sim.TrySpawnRobotFromUrdf(urdf, out string name, out string err)) { m_SpawnedName = name; FrameCamera(); }
+        if (W.Sim.TrySpawnRobotFromUrdf(urdf, out string name, out string err)) { m_SpawnedName = name; W.PlaceSpawned(name); FrameCamera(); }
         else Debug.LogWarning("[PhaseRobot] spawn: " + err);
     }
 
