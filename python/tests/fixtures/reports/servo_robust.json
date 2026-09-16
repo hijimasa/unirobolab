@@ -1,0 +1,341 @@
+{
+ "contract": "servo_demo_rl",
+ "pass": true,
+ "checks": {
+  "joints_present": {
+   "pass": true,
+   "detail": "missing=[] seen=['cheap_joint', 'ideal_joint']"
+  },
+  "node_alive": {
+   "pass": true,
+   "detail": "33 status msgs, errors=[]"
+  },
+  "rate": {
+   "pass": true,
+   "detail": "median 25.0 Hz vs target 25 Hz (min 25.0, max 25.0)"
+  },
+  "obs_fresh": {
+   "pass": true,
+   "detail": "worst joint_states age 33.4 ms, mean 15.5 ms (limit 100 ms)"
+  },
+  "tracking": {
+   "pass": true,
+   "phases": [
+    {
+     "goal": [
+      0.5,
+      0.5
+     ],
+     "t_end": 8.84,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0007,
+       "tol": 0.08,
+       "q_mean": 0.4993,
+       "n": 30
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0111,
+       "tol": 0.12,
+       "q_mean": 0.5111,
+       "n": 30
+      }
+     }
+    },
+    {
+     "goal": [
+      -0.5,
+      -0.5
+     ],
+     "t_end": 13.04,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0009,
+       "tol": 0.08,
+       "q_mean": -0.5009,
+       "n": 30
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0085,
+       "tol": 0.12,
+       "q_mean": -0.5085,
+       "n": 30
+      }
+     }
+    },
+    {
+     "goal": [
+      0.018914599520410746,
+      0.7207419141214966
+     ],
+     "t_end": 17.24,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0003,
+       "tol": 0.08,
+       "q_mean": 0.0192,
+       "n": 31
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0066,
+       "tol": 0.12,
+       "q_mean": 0.7141,
+       "n": 31
+      }
+     }
+    },
+    {
+     "goal": [
+      -0.5693446196485861,
+      0.7178391154195902
+     ],
+     "t_end": 21.44,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0047,
+       "tol": 0.08,
+       "q_mean": -0.5646,
+       "n": 31
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0097,
+       "tol": 0.12,
+       "q_mean": 0.7081,
+       "n": 31
+      }
+     }
+    },
+    {
+     "goal": [
+      -0.3010696767832233,
+      -0.12267768164387893
+     ],
+     "t_end": 25.64,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.006,
+       "tol": 0.08,
+       "q_mean": -0.3071,
+       "n": 30
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0112,
+       "tol": 0.12,
+       "q_mean": -0.1338,
+       "n": 30
+      }
+     }
+    },
+    {
+     "goal": [
+      0.5243241501127069,
+      -0.14528138180934191
+     ],
+     "t_end": 29.84,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0076,
+       "tol": 0.08,
+       "q_mean": 0.5232,
+       "n": 31
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0311,
+       "tol": 0.12,
+       "q_mean": -0.1528,
+       "n": 31
+      }
+     }
+    },
+    {
+     "goal": [
+      0.07934990027689515,
+      -0.7559054188110906
+     ],
+     "t_end": 34.04,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0004,
+       "tol": 0.08,
+       "q_mean": 0.0798,
+       "n": 31
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0034,
+       "tol": 0.12,
+       "q_mean": -0.7593,
+       "n": 31
+      }
+     }
+    }
+   ]
+  },
+  "finite": {
+   "pass": true,
+   "detail": "0 non-finite vectors over 828 actions / 828 observations"
+  }
+ },
+ "scenario": {
+  "goals": 7,
+  "hold_s": 4.0,
+  "disturbances": [
+   {
+    "at_s": 1.0,
+    "link": "cheap_arm_link",
+    "force": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "torque": [
+     0.3,
+     0.0,
+     0.0
+    ],
+    "duration_s": 0.2
+   }
+  ]
+ },
+ "wrenches": [
+  {
+   "t": 5.857052091996593,
+   "entity": "ServoDemo",
+   "ok": true,
+   "at_s": 1.0,
+   "link": "cheap_arm_link",
+   "force": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "torque": [
+    0.3,
+    0.0,
+    0.0
+   ],
+   "duration_s": 0.2
+  },
+  {
+   "t": 10.055793651998101,
+   "entity": "ServoDemo",
+   "ok": true,
+   "at_s": 1.0,
+   "link": "cheap_arm_link",
+   "force": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "torque": [
+    0.3,
+    0.0,
+    0.0
+   ],
+   "duration_s": 0.2
+  },
+  {
+   "t": 14.255955430999165,
+   "entity": "ServoDemo",
+   "ok": true,
+   "at_s": 1.0,
+   "link": "cheap_arm_link",
+   "force": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "torque": [
+    0.3,
+    0.0,
+    0.0
+   ],
+   "duration_s": 0.2
+  },
+  {
+   "t": 18.45591758500086,
+   "entity": "ServoDemo",
+   "ok": true,
+   "at_s": 1.0,
+   "link": "cheap_arm_link",
+   "force": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "torque": [
+    0.3,
+    0.0,
+    0.0
+   ],
+   "duration_s": 0.2
+  },
+  {
+   "t": 22.656085686998267,
+   "entity": "ServoDemo",
+   "ok": true,
+   "at_s": 1.0,
+   "link": "cheap_arm_link",
+   "force": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "torque": [
+    0.3,
+    0.0,
+    0.0
+   ],
+   "duration_s": 0.2
+  },
+  {
+   "t": 26.85620764899795,
+   "entity": "ServoDemo",
+   "ok": true,
+   "at_s": 1.0,
+   "link": "cheap_arm_link",
+   "force": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "torque": [
+    0.3,
+    0.0,
+    0.0
+   ],
+   "duration_s": 0.2
+  },
+  {
+   "t": 31.056462272994395,
+   "entity": "ServoDemo",
+   "ok": true,
+   "at_s": 1.0,
+   "link": "cheap_arm_link",
+   "force": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "torque": [
+    0.3,
+    0.0,
+    0.0
+   ],
+   "duration_s": 0.2
+  }
+ ]
+}

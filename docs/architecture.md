@@ -687,3 +687,30 @@ Contract タブの「Draft from URDF」が同じものを呼んでエディタ�
   1 回の制限時間をスライダで決め、「Save task」「Save & train」(8 体で学習開始)ができる。
   Contract / Train / Check の専門家向けタブは「詳細」ボタンで表示を切り替える(既定は非表示)。
 - C# は JSON を扱わない。読み書きはすべて `task-show` / `task-set` に任せる。
+
+## 21. ライトユーザー動線 ③: 平易なチェックリストと次の一手(2026-09-16)
+
+- `unirobolab explain-report <report.json> [--lang ja|en] [--json]`: sim2sim の report.json を
+  「関節が見つかる / 決めた周期で動いている / センサの値が新しい / 目標に到達する /
+  押されても戻る(外乱があるとき) / 数値が壊れていない / 非常停止が効く」の ok / NG と理由に
+  言い換え、失敗を最大 4 つの「次の一手」に変換する(python/src/unirobolab/explain.py)。
+  判定は変えない。detail 文字列(sim2sim.py の固定書式)から数値を拾うだけ。
+- 次の一手の規則: 関節名が無い → 近い名前を提案(difflib)し Contract へ。ノード停止に伴う
+  周期・鮮度・到達の NG は原因が上にあるので助言を出さない。誤差 ≒ 目標(動いていない)→
+  行動の scale/offset と指令トピック。誤差が許容の 1.5 倍以内 → 許容誤差の拡大か学習の継続、
+  移動基体ならさらに「留まる学習 + 観測ノイズ」。それ以上 → 目標範囲を狭める / 制限時間を延ばす、
+  観測ノイズ。センサが古い → target_fps。NaN → 学習率を下げて再学習。非常停止 → safety 設定。
+- 本体の Check タブはライトユーザー層に出す(Task と並ぶ)。「Run check」は契約(Task タブ)から
+  パッケージ名 `<name>_policy`、隣の `<name>.sim2sim.json`、報告先 `sim2sim_out/report.json`
+  を補い、完了後に report.json を読んで `explain-report` の出力を表示する。契約・パッケージ・
+  シナリオの入力と report.json の生の要約は「詳細」のときだけ見える。
+  `SIM_CHECK_AUTORUN=<report.json>` でヘッドレスに表示内容をログへ出せる。
+  `SIM_GUI_SCREENSHOT=<png>` を付けて窓ありで起動すると 8 秒後に画面を保存する(見た目の確認用。
+  この機械の DISPLAY=:1 で確認済み、docs/images/gui_check_tab.png)。
+- 日本語表示: プロジェクトは CJK フォントを同梱しないので、起動時に OS のフォント
+  (Noto Sans CJK JP / Yu Gothic / Meiryo / Hiragino / Droid Sans Fallback など) から
+  `TMP_FontAsset.CreateFontAsset(family, style, 24)` で動的フォントを作り TMP のフォールバックに
+  登録する。見つからなければ英語表示(explain-report --lang en、ボタンは "Expert")。
+  子プロセスの出力は UTF-8 で読む(ExternalProcess、PYTHONIOENCODING=utf-8)。
+- テスト: python/tests/test_explain.py(fixtures/reports の 5 件: 関節名違い、scale 違い、
+  惜しい未到達、外乱 7 回、非常停止)。

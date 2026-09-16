@@ -1,0 +1,110 @@
+{
+ "contract": "servo_demo_rl",
+ "pass": true,
+ "checks": {
+  "joints_present": {
+   "pass": true,
+   "detail": "missing=[] seen=['cheap_joint', 'ideal_joint']"
+  },
+  "node_alive": {
+   "pass": true,
+   "detail": "22 status msgs, errors=[]"
+  },
+  "rate": {
+   "pass": true,
+   "detail": "median 25.0 Hz vs target 25 Hz (min 25.0, max 25.0)"
+  },
+  "obs_fresh": {
+   "pass": true,
+   "detail": "worst joint_states age 33.3 ms, mean 17.0 ms (limit 100 ms)"
+  },
+  "tracking": {
+   "pass": true,
+   "phases": [
+    {
+     "goal": [
+      0.5,
+      0.5
+     ],
+     "t_end": 8.84,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0017,
+       "tol": 0.08,
+       "q_mean": 0.4983,
+       "n": 30
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0004,
+       "tol": 0.12,
+       "q_mean": 0.5004,
+       "n": 30
+      }
+     }
+    },
+    {
+     "goal": [
+      -0.5,
+      -0.5
+     ],
+     "t_end": 13.03,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0009,
+       "tol": 0.08,
+       "q_mean": -0.5009,
+       "n": 30
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0082,
+       "tol": 0.12,
+       "q_mean": -0.5082,
+       "n": 30
+      }
+     }
+    },
+    {
+     "goal": [
+      0.0,
+      0.0
+     ],
+     "t_end": 17.2,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0014,
+       "tol": 0.08,
+       "q_mean": -0.0014,
+       "n": 30
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0036,
+       "tol": 0.12,
+       "q_mean": -0.0036,
+       "n": 30
+      }
+     }
+    }
+   ]
+  },
+  "finite": {
+   "pass": true,
+   "detail": "0 non-finite vectors over 510 actions / 510 observations"
+  },
+  "estop": {
+   "pass": true,
+   "detail": "stopped reported=True, actions while stopped=0, resumed=True"
+  }
+ },
+ "scenario": {
+  "goals": 3,
+  "hold_s": 4.0,
+  "disturbances": []
+ },
+ "wrenches": []
+}

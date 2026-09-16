@@ -142,6 +142,14 @@ def cmd_task_set(a) -> int:
     return 0
 
 
+def cmd_explain_report(a) -> int:
+    import json as _json
+    from .explain import explain, format_text
+    ex = explain(_json.load(open(a.report)), a.lang)
+    print(_json.dumps(ex, ensure_ascii=False) if a.json else format_text(ex, a.lang))
+    return 0 if ex["pass"] else 1
+
+
 def cmd_task_show(a) -> int:
     """Print the light-user fields of a task config (for the GUI to read back)."""
     import json as _json
@@ -243,6 +251,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--tolerance", type=float, help="success tolerance [rad or m]")
     s.add_argument("--time", type=float, help="time limit per attempt [s]")
     s.set_defaults(fn=cmd_task_set)
+
+    s = sub.add_parser("explain-report", help="plain-language checklist + next steps from a sim2sim report.json")
+    s.add_argument("report")
+    s.add_argument("--lang", default="ja", choices=["ja", "en"])
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_explain_report)
 
     s = sub.add_parser("task-show", help="print the light-user fields of a task config as JSON")
     add_contract(s)

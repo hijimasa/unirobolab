@@ -1,0 +1,94 @@
+{
+ "contract": "diffbot_rl",
+ "pass": false,
+ "checks": {
+  "joints_present": {
+   "pass": true,
+   "detail": "missing=[] seen=['right_wheel_joint', 'left_wheel_joint']"
+  },
+  "node_alive": {
+   "pass": true,
+   "detail": "28 status msgs, errors=[]"
+  },
+  "rate": {
+   "pass": true,
+   "detail": "median 10.0 Hz vs target 10 Hz (min 10.0, max 10.0)"
+  },
+  "obs_fresh": {
+   "pass": true,
+   "detail": "worst joint_states age 32.6 ms, mean 22.1 ms (limit 150 ms)"
+  },
+  "tracking": {
+   "pass": false,
+   "phases": [
+    {
+     "goal": [
+      1.4999996647238731,
+      3.7195809454715345e-07
+     ],
+     "t_end": 12.81,
+     "joints": {
+      "base": {
+       "pass": true,
+       "mean_abs_err": 0.0351,
+       "tol": 0.25,
+       "q_mean": [
+        1.468,
+        0.015
+       ],
+       "n": 25
+      }
+     }
+    },
+    {
+     "goal": [
+      -3.3527612686157227e-07,
+      1.5000003719580945
+     ],
+     "t_end": 21.0,
+     "joints": {
+      "base": {
+       "pass": true,
+       "mean_abs_err": 0.129,
+       "tol": 0.25,
+       "q_mean": [
+        -0.128,
+        1.483
+       ],
+       "n": 25
+      }
+     }
+    },
+    {
+     "goal": [
+      -1.0000003352761269,
+      -0.9999996280419055
+     ],
+     "t_end": 29.17,
+     "joints": {
+      "base": {
+       "pass": false,
+       "mean_abs_err": 0.2531,
+       "tol": 0.25,
+       "q_mean": [
+        -1.12,
+        -0.779
+       ],
+       "n": 25
+      }
+     }
+    }
+   ]
+  },
+  "finite": {
+   "pass": true,
+   "detail": "0 non-finite vectors over 281 actions / 281 observations"
+  }
+ },
+ "scenario": {
+  "goals": 0,
+  "hold_s": 8.0,
+  "disturbances": []
+ },
+ "wrenches": []
+}

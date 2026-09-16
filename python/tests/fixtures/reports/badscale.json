@@ -1,0 +1,100 @@
+{
+ "contract": "servo_demo_badscale",
+ "pass": false,
+ "checks": {
+  "joints_present": {
+   "pass": true,
+   "detail": "missing=[] seen=['cheap_joint', 'ideal_joint']"
+  },
+  "node_alive": {
+   "pass": true,
+   "detail": "16 status msgs, errors=[]"
+  },
+  "rate": {
+   "pass": true,
+   "detail": "median 50.0 Hz vs target 50 Hz (min 50.0, max 50.0)"
+  },
+  "obs_fresh": {
+   "pass": true,
+   "detail": "worst joint_states age 105.5 ms, mean 55.3 ms (limit 120 ms)"
+  },
+  "tracking": {
+   "pass": false,
+   "phases": [
+    {
+     "goal": [
+      0.5,
+      0.5
+     ],
+     "t_end": 8.76,
+     "joints": {
+      "ideal_joint": {
+       "pass": false,
+       "mean_abs_err": 0.4998,
+       "tol": 0.05,
+       "q_mean": 0.9998,
+       "n": 30
+      },
+      "cheap_joint": {
+       "pass": false,
+       "mean_abs_err": 0.5014,
+       "tol": 0.12,
+       "q_mean": 1.0014,
+       "n": 30
+      }
+     }
+    },
+    {
+     "goal": [
+      -0.5,
+      -0.5
+     ],
+     "t_end": 12.94,
+     "joints": {
+      "ideal_joint": {
+       "pass": false,
+       "mean_abs_err": 0.4998,
+       "tol": 0.05,
+       "q_mean": -0.9998,
+       "n": 30
+      },
+      "cheap_joint": {
+       "pass": false,
+       "mean_abs_err": 0.5058,
+       "tol": 0.12,
+       "q_mean": -1.0058,
+       "n": 30
+      }
+     }
+    },
+    {
+     "goal": [
+      0.0,
+      0.0
+     ],
+     "t_end": 17.12,
+     "joints": {
+      "ideal_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0,
+       "tol": 0.05,
+       "q_mean": -0.0,
+       "n": 30
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0098,
+       "tol": 0.12,
+       "q_mean": 0.0098,
+       "n": 30
+      }
+     }
+    }
+   ]
+  },
+  "finite": {
+   "pass": true,
+   "detail": "0 non-finite vectors over 811 actions / 811 observations"
+  }
+ }
+}

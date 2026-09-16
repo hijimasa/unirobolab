@@ -33,11 +33,11 @@ def test_default_offsets_resolved_by_regex():
     # joint_pos_rel = q - q_default -> offset = -q_default, in the caller's joint order
     expected = {"LF_HAA": 0.0, "LF_HFE": -0.4, "LH_HFE": 0.4, "LF_KFE": 0.8, "LH_KFE": -0.8}
     for j, v in expected.items():
-        assert abs(jp.shift[ANYMAL_JOINTS.index(j)] - v) < 1e-9
+        assert abs(jp.shift[ANYMAL_JOINTS.index(j)] - v) < 1e-6  # float32
     act = c.actions[0]
     assert act.spec["mode"] == "position"
     assert np.allclose(act.scale, 0.5)
-    assert abs(act.shift[ANYMAL_JOINTS.index("RH_KFE")] - 0.8) < 1e-9  # use_default_offset
+    assert abs(act.shift[ANYMAL_JOINTS.index("RH_KFE")] - 0.8) < 1e-6  # use_default_offset
 
 
 def test_scales_and_command_type():

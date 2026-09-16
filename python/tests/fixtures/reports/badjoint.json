@@ -1,0 +1,91 @@
+{
+ "contract": "servo_demo_badjoint",
+ "pass": false,
+ "checks": {
+  "joints_present": {
+   "pass": false,
+   "detail": "missing=['ideal_join'] seen=['cheap_joint', 'ideal_joint']"
+  },
+  "node_alive": {
+   "pass": false,
+   "detail": "16 status msgs, errors=[\"joints missing from /ServoDemo/joint_states: ['ideal_join'] (got ['cheap_joint', 'ideal_joint'])\"]"
+  },
+  "rate": {
+   "pass": false,
+   "detail": "no rate samples"
+  },
+  "obs_fresh": {
+   "pass": false,
+   "detail": "no observation age samples"
+  },
+  "tracking": {
+   "pass": false,
+   "phases": [
+    {
+     "goal": [
+      0.5,
+      0.5
+     ],
+     "t_end": 8.77,
+     "joints": {
+      "ideal_join": {
+       "pass": false,
+       "detail": "no samples in settle window"
+      },
+      "cheap_joint": {
+       "pass": false,
+       "mean_abs_err": 0.4916,
+       "tol": 0.12,
+       "q_mean": 0.0084,
+       "n": 30
+      }
+     }
+    },
+    {
+     "goal": [
+      -0.5,
+      -0.5
+     ],
+     "t_end": 12.97,
+     "joints": {
+      "ideal_join": {
+       "pass": false,
+       "detail": "no samples in settle window"
+      },
+      "cheap_joint": {
+       "pass": false,
+       "mean_abs_err": 0.5084,
+       "tol": 0.12,
+       "q_mean": 0.0084,
+       "n": 30
+      }
+     }
+    },
+    {
+     "goal": [
+      0.0,
+      0.0
+     ],
+     "t_end": 17.15,
+     "joints": {
+      "ideal_join": {
+       "pass": false,
+       "detail": "no samples in settle window"
+      },
+      "cheap_joint": {
+       "pass": true,
+       "mean_abs_err": 0.0084,
+       "tol": 0.12,
+       "q_mean": 0.0084,
+       "n": 30
+      }
+     }
+    }
+   ]
+  },
+  "finite": {
+   "pass": false,
+   "detail": "0 non-finite vectors over 0 actions / 0 observations"
+  }
+ }
+}
