@@ -1,189 +1,137 @@
 # チュートリアル: URDF から実機用パッケージまで (servo_demo)
 
-> 注 (2026-09-16): この文書は v1 の GUI (Task / Check / Deploy タブ) で撮ったものです。GUI は docs/ux-flow.md v2.1 の
-> ウィザード (① ロボット → ⑥ 実機へ) に作り直し中で、画面は docs/images/wizard/ にあります。手順書は作り直し後に差し替えます。
+UniRoboLab の画面だけで、ロボットの URDF から「学習 → 試す → 配備前チェック → 実機向けの ROS 2
+パッケージ」まで通す手順です。題材は 2 関節のサーボ台 (servo_demo)。関節を目標角へ動かす方策を
+学習します。所要時間はおよそ 20 分 (うち学習が 7〜8 分)。
 
-UniRoboLab の GUI だけで、ロボットの URDF から「学習 → 試す → 配備前チェック → 実機向けの ROS 2 パッケージ」
-まで通す手順です。題材は 2 関節のサーボ台 (servo_demo)。関節を目標角へ動かす方策を学習します。
-所要時間はおよそ 30 分 (うち学習が 10〜15 分)。
+画面は 2026-09-17 に実際に通したときのものです (v1 の GUI での旧版は docs/tutorial-v1-2026-09-16.md)。
 
-このチュートリアルの画面は 2026-09-16 に実際に通したときのものです。
+## 0. 準備 (一度だけ)
 
-## 0. 準備
-
-必要なもの:
-
-- UniRoboLab のプレイヤー (`scripts/build_player.sh` で `generated/player/UniRoboLab.x86_64` を作る)
-- Python 環境 (`scripts/setup_python.sh --training`。`.venv/bin/python` ができる)
-- 配備前チェック (sim2sim) だけ ROS 2 が要る。ここでは同梱の Docker コンテナ
-  (`scripts/sim2sim_container.sh start`) を使う
-- ロボットの URDF。ここでは `generated/tutorial/servo_demo.urdf` にコピーしておく
-
-設定ファイル (`scripts/tutorial_resources.json`) を用意し、プレイヤーに渡します。
-
-```json
-{
-  "settings": { "physics_hz": 50, "target_fps": 120, "time_scale": 10,
-                "stepping_steps_per_frame": 8, "learning_port": 10111 },
-  "unirobolab": { "python": "<リポジトリ>/.venv/bin/python",
-                  "policy_runner_env": "PYTHONPATH=<リポジトリ>/python/src" }
-}
-```
-
-- `settings` はシミュレータ核の設定。`learning_port` が学習と「試す」の入口で、これが無いと
-  GUI の学習ボタンは動きません。`time_scale` と `stepping_steps_per_frame` は学習を速くする設定です。
-- `unirobolab` は GUI が呼ぶ Python の場所です。
+- プレイヤーを作る: `scripts/build_player.sh` → `generated/player/UniRoboLab.x86_64`
+- Python 環境を作る: `scripts/setup_python.sh --training` (`.venv` ができ、画面が自動で見つけます)
+- 配備前チェック (⑤) には ROS 2 が要ります。この PC に無ければ同梱のコンテナを使います:
+  `scripts/sim2sim_container.sh start` (⑤ の画面の「コンテナを起動」でも同じことができます)
 
 起動:
 
 ```bash
-SIMULATION_RESOURCES_CONFIG=$PWD/scripts/tutorial_resources.json generated/player/UniRoboLab.x86_64
+scripts/unirobolab_gui.sh ~/unirobolab_projects/servo   # 引数はプロジェクトのフォルダ (無ければ作られる)
 ```
 
-![起動直後](images/tutorial/01_start.png)
+設定ファイルを書く必要はありません。学習用のサーバは既定で有効です。
 
-左上が UniRoboLab パネルです。既定では **Task / Check / Deploy** の 3 つのタブと「詳細」ボタンだけが
-見えます。「詳細」を押すと専門家向けのタブ (Contract / Train) が現れます。左下の
-「Try the policy」は学習した方策をその場で動かすパネルです。
+画面は上から「ステッパー (① ロボット → ⑥ 実機へ)」「左: そのフェーズの主画面、右: 3D」「下: 状態行と
+詳細 / 戻る / 次へ」です。ステッパーは今いる段階を青、済んだ段階を緑で示し、前提が無い段階は押せません。
+やり直しが必要になった段階 (上流を変えたとき) には「!」が付きます。
 
-## 1. URDF から契約の草案を作る (詳細 > Contract)
+## ① ロボット
 
-「契約 (contract)」は、方策が何を見て何を出すか (関節の順番、観測、行動、周期、ROS のトピック) を
-書いた JSON です。手で書く必要はなく、URDF から草案を作れます。
+「選ぶ...」で URDF を選びます。関節と可動範囲、指令の方式、基体の種類が読み取られて表に出て、
+右にロボットが現れます。
 
-1. 「詳細」を押し、Contract タブを開く
-2. 一番上の欄に URDF のパスを入れ、**Draft from URDF** を押す
+![① ロボット](images/tutorial2/01_robot.png)
 
-![Contract タブで草案を作った直後](images/tutorial/02_draft.png)
+下の「実機の接続先」は、⑥ で作るパッケージがそのまま使う値です。名前空間 (`/ServoDemo/joint_states`
+の `ServoDemo`)、指令の方式 (JointState トピック / ros2_control)、非常停止トピック (空なら
+`/<名前空間>/estop`)。ここで決めたものを ⑤ で確かめ、⑥ では変えません。
 
-契約 (`servo_demo.json`) と学習設定 (`servo_demo.train.json`) が URDF の隣にでき、エディタに契約が
-表示されます。可動関節 (`ideal_joint`, `cheap_joint`) と、固定基体なので「関節目標」のタスクが
-選ばれたことが `_notes` に書かれています。このとき Task タブの契約欄にもパスが入るので、
-中身を読まなくても次へ進めます。
+関節名と接続先が実機と合っていれば「次へ」。
 
-## 2. タスクを決めて学習する (Task)
+## ② タスク
 
-Task タブに戻ると、草案の内容がスライダに反映されています (**Read** を押すと読み直せます)。
+「どうなれば成功か」を決めます。固定基体のロボットなので「関節を目標角へ動かす」タスクが選ばれ、
+右の 3D に各関節の目標範囲が緑の弧で描かれます。
 
-![Task タブ](images/tutorial/03_task.png)
+![② タスク](images/tutorial2/02_task.png)
 
-- **Goal range**: 目標角の範囲。URDF の可動範囲から ±1.22 rad が入っている
-- **Success**: 成功とみなす誤差 (rad)
-- **Time per attempt**: 1 回の試行の制限時間 (秒)
+- 目標角の範囲: 自動 (可動範囲の 80 %) か、手で決める (スライダで ±rad)
+- 成功とみなす誤差: 目標角から何 rad 以内か。ここでは 0.05 rad のまま
+- 1 回の制限時間: 2 秒のまま
+- 学習の目安: 許容誤差と並列数からの見込み。**許容誤差を半分にすると学習時間は数倍になります**
 
-ここでは Success を 0.03 rad、Time per attempt を 3 秒にして **Save & train** を押します。
-学習設定ファイルが書き換わり、8 体のロボットが並んで学習が始まります。
+「次へ」で契約 (方策が何を見て何を出すかの定義) と学習設定が生成されます。契約 JSON を開く必要は
+ありません (見たければ「詳細」)。
 
-![学習中](images/tutorial/04_training.png)
+## ③ 学習
 
-学習中は 1 秒ごとに進捗が文で出ます: 「学習中 5% / 成功率 4% (直近 200 回) / 誤差 0.246 / 目標 0.03 /
-残り およそ 21 分 / (目標に達すれば早く終わります) / 8 体並列」。下の曲線は青が試行ごとの誤差、
-緑が成功率です。残り時間は設定上限までの見込みで、目標の誤差に達すれば早く終わります。
+![③ 学習の前](images/tutorial2/03_train_ready.png)
 
-![学習が終わった](images/tutorial/05_trained.png)
+「学習を始める」を押すと、右に 8 体のロボットが並んで学習が始まります。1 秒ごとに進捗が文で出ます。
 
-この例では約 12 分、20 万ステップで目標 (誤差 0.030 rad) に達して止まりました。
-「学習が終わりました / 成功率 58% (直近 200 回) / 誤差 0.030 / 目標 0.03」。
-結果 (policy.onnx) は契約が指す `runs/ServoDemo_draft/` に置かれます。
+![③ 学習中](images/tutorial2/04_training.png)
 
-うまく行かないとき (成功率が 0 のまま、途中で悪化する) は、この文の下に「次の一手」が出ます
-(目標範囲を狭める、制限時間を延ばす、学習率を下げる)。
+「学習中 4% / 成功率 3% (直近 200 回) / 誤差 0.327 / 目標 0.05 / 残り およそ 22 分 / (目標に達すれば早く終わります) /
+8 体並列」。残り時間は上限までの見込みで、目標の誤差に達すれば早く終わります。曲線は青が試行ごとの
+誤差、緑が成功率です。
 
-## 3. 試す (Try the policy)
+![③ 学習が終わった](images/tutorial2/05_trained.png)
 
-学習した方策をその場で動かします。
+この例では 7〜8 分で目標に達して止まりました (「学習が終わりました / 成功率 57% / 誤差 0.050 / 目標 0.05」)。
+うまく行かないとき (成功率が 0 のまま、途中で悪化) は文の下に「次の一手」と「② に戻る」ボタンが出ます。
 
-1. 左下のパネルの **Run** を押す (契約と方策は Task タブと直近の学習結果が使われる)
-2. 関節ごとにスライダが出るので動かす。目標が方策に送られ、ロボットが追従する
+## ④ 試す (任意)
 
-![試す](images/tutorial/06_try.png)
+学習した方策をその場で動かします。「動かす」を押し、関節ごとのスライダで目標を変えると追従します。
+状態は「誤差 0.002 rad / 経過 17 s」のように出ます。台車のロボットなら「地面をクリックして目標を置く」
+で目標 (緑の円) を置け、走った軌跡が青い線で描かれます。
 
-状態は「誤差 0.038 rad / 経過 18 s」のような文で出ます (目標 0.6, −0.6 rad)。台車のような地点到達のロボットでは
-**Pick in 3D** を押して地面をクリックすると目標 (緑の円) を置け、走った軌跡が青い線で描かれます。
+![④ 試す](images/tutorial2/06_try.png)
 
-補足: 学習向けの `time_scale` が設定されていても、「試す」の間だけ実時間に戻ります。
+## ⑤ チェック (配備前)
 
-## 4. 配備前チェック (Check)
+実機に持っていく前に、この画面のシミュレータを相手に ROS 2 の経路で方策を動かして確かめます。
+「チェックを実行」を押すと 5 段階が順に進みます (パッケージ生成 → ビルド → シミュレータに接続して
+スポーン → ROS 2 経由で方策を動かして判定 → 完了)。1〜2 分かかります。
 
-実機に持っていく前に、ROS 2 の経路 (生成したノード ↔ シミュレータ) で方策を動かして、
-関節が見つかるか、決めた周期で動くか、目標に到達するか、非常停止が効くかを確かめます。
+![⑤ 実行中](images/tutorial2/07_checking.png)
 
-チェックは ROS 2 が要るので、ここでは同梱のコンテナで実行します (GUI の **Run check** は、
-設定の `unirobolab.sim2sim_command` にコンテナ内で `unirobolab sim2sim` を呼ぶコマンドを書くと
-同じことをします)。
+結果は平易なチェックリストです。非常停止の試験も含まれます。
+
+![⑤ 合格](images/tutorial2/08_check.png)
+
+NG があれば「次の一手」に何を直せばよいかが出ます (関節名の対応、行動の scale/offset、許容誤差、
+シミュレータのフレームレート、など)。
+
+ROS 2 が無い PC では、この画面の「コンテナを起動」で同梱のコンテナが立ち上がり、チェックはその中で
+実行されます (プロジェクトのフォルダはリポジトリの配下にある必要があります)。
+
+## ⑥ 実機へ
+
+⑤ で確かめた契約と方策から ROS 2 パッケージと手順書 (DEPLOY.md) を作ります。接続先は ① で決めた
+ものがそのまま使われます。
+
+![⑥ 実機へ](images/tutorial2/09_deploy.png)
+
+画面に要約 (接続するトピック、非常停止、上限値、起動コマンド) が出ます。「手順書を開く」で
+DEPLOY.md の全文が開きます。実機では:
 
 ```bash
-# コンテナ内 (scripts/sim2sim_container.sh shell)
-unirobolab gen generated/tutorial/servo_demo.json --out generated/tutorial/pkg
-colcon build --base-paths generated/tutorial/pkg ... && source install/setup.sh
-N_ENTITIES=1 NS=ServoDemo bash scripts/servo_demo_bringup.sh
-unirobolab sim2sim generated/tutorial/servo_demo.json --pkg servodemo_draft_policy --out generated/tutorial/sim2sim_out
+colcon build --packages-select servodemo_policy && source install/setup.bash
+ros2 launch servodemo_policy policy.launch.py ns:=ServoDemo
 ```
 
-できた `report.json` を Check タブの **Load report** で読むと、平易なチェックリストになります。
-この例では合格でした: 関節が見つかる (2 関節)、25 Hz で動いている、センサの遅れは最悪 36 ms、
-3 つの目標すべてに到達 (最大誤差 0.065 rad、許容 0.1 rad)。
+DEPLOY.md の「動かす前に確かめること」(非常停止、可動範囲と速度の上限、観測の鮮度、立ち上がり時間)
+を順に確認してから動かしてください。
 
-![Check タブ](images/tutorial/07_check.png)
+## 途中でやめて後で続けるとき
 
-NG があれば「次の一手」に何を直せばよいかが出ます (関節名の対応、行動の scale/offset、
-許容誤差、シミュレータのフレームレート、など)。
-
-## 5. 実機へ (Deploy)
-
-Deploy タブで接続先を決めて **Make ROS 2 package** を押します。
-
-- namespace: 実機のトピックの名前空間 (`/ServoDemo/joint_states` など)
-- command: 指令の方式。`joint_states topic` (JointState を受けるドライバ) か
-  `ros2_control controller` (`switch` で切替、コントローラ名を入れる)
-- e-stop topic: 非常停止 (std_msgs/Bool)。空なら `/<namespace>/estop`
-- package dir: 出力先。空なら契約の隣の `deploy/`
-
-![Deploy タブ](images/tutorial/08_deploy.png)
-
-契約の ros 節が書き換わり、ROS 2 パッケージ (`servodemo_draft_policy`) が生成され、その中に
-手順書 `DEPLOY.md` が置かれます。パネルには要約 (接続するトピック、非常停止、上限値、起動コマンド)
-が出ます。実機では:
-
-```bash
-colcon build --packages-select servodemo_draft_policy && source install/setup.bash
-ros2 launch servodemo_draft_policy policy.launch.py ns:=ServoDemo
-```
-
-DEPLOY.md の「動かす前に確かめること」(非常停止、可動範囲と速度の上限、観測の鮮度、
-立ち上がり時間) を順に確認してから動かしてください。
+もう一度同じ起動コマンドを実行すると、前回のプロジェクトが開き、成果物の有無から続きの段階に
+戻ります。① のロボットや接続先、② のタスクを変えると、それより後の段階に「!」が付き、やり直しが
+必要なことが分かります。
 
 ## 困ったとき
 
 | 症状 | 見るところ |
 |---|---|
-| 学習ボタンを押しても何も起きない | 設定の `settings.learning_port` が無い。パネルの状態行に理由が出る |
-| 「試す」で誤差が大きいまま | 方策が学習結果と別のものを指していないか (「詳細」で契約と ONNX の欄を確認) |
-| Check が NG | Check タブの「次の一手」。関節名違いは Contract タブで直す |
-| 日本語が表示されない | OS に日本語フォント (Noto Sans CJK など) が無いと英語表示になる |
+| 「学習を始める」が押せない | 下の状態行に理由が出ます (Python 環境が無い、学習サーバが無効) |
+| 「試す」で誤差が大きいまま | ③ の学習結果が古くないか (ステッパーの「!」)。詳細の実行器ログ |
+| ⑤ が実行できない | ROS 2 もコンテナも無い。`scripts/sim2sim_container.sh start` か「コンテナを起動」 |
+| 日本語が表示されない | OS に日本語フォント (Noto Sans CJK など) が無いと英語表示になります |
 
-## このチュートリアルで気づいた点 (GUI 改善の候補)
+## この版で残っている課題
 
-通しで動かして直したもの (このチュートリアルの作成中に見つかった不具合):
-
-- 学習向けの `time_scale` のまま「試す」と、実時間で動く実行器に対してシミュレータが 10 倍速で進み、
-  方策が追従できなかった (誤差 0.48 rad)。「試す」の間は時間倍率を 1 に戻すようにした。
-- Task タブが学習結果を契約ファイル名のフォルダに出していたため、契約が宣言する
-  `runs/<契約名>/policy.onnx` と食い違い、パッケージ生成で ONNX が見つからなかった。
-  契約の宣言先に出すようにした。
-- 契約名 `ServoDemo_draft` から作るパッケージ名に大文字が入り、ROS 2 の規則に反していた。
-  小文字と `_` に丸めるようにした (`servodemo_draft_policy`)。
-- Contract タブの JSON エディタが本文の高さを申告してタブ全体を潰していた (レイアウト優先度の問題)。
-
-これから直したいもの:
-
-- Task タブの「Success」の既定 0.05 rad と、チュートリアルで使った 0.03 rad で学習時間が大きく変わる
-  (0.03 だと 20 万ステップ、12 分)。スライダの横に「目安の学習時間」を出すとよい。
-- 学習の残り時間の見込みは上限 (40 万ステップ) 基準なので、早期終了する場合は実際より長く出る。
-- 「試す」で使う方策の場所が Task タブの学習結果に依存している。学習を別の場所に出すと拾えない。
-- Check の実行は ROS 2 環境が必要で、GUI 単体では完結しない。コンテナを GUI から起動できると
-  ライトユーザーには楽になる。
-- Deploy タブの手順書は要約しか見えない。DEPLOY.md をその場で開くボタンがあるとよい。
-- 8 体並列で学習すると、カメラの初期位置からは全部が見えない (一列に並ぶ)。
-- Contract タブの JSON エディタは専門家向けだが、関節名の対応 (実機の関節名と契約の関節名) を
-  直す用途で使うなら、表形式の方が安全。
+- ① は関節名を表で直せません (今は表示だけ)。実機の関節名と URDF が違うときは URDF 側を直してください。
+- ② の開始条件は「今の姿勢・位置」に固定です (v1)。
+- ⑤ をこの PC の ROS 2 で回すには、シミュレータ側のユーティリティ (simulation_ros2_utils、ros_tcp_endpoint)
+  が必要です。コンテナには入っています。
