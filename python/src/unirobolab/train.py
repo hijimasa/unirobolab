@@ -38,6 +38,11 @@ DEFAULT_TRAIN = {
     # too wide for position targets in radians and wastes most of the budget.
     "log_std_init": -1.5,
     "eval_episodes": 3,
+    # Early stopping, checked at the end of every rollout over the last `window` episodes:
+    #   metric "success_rate": fraction of episodes ending with info["success"] >= threshold
+    #   metric "final_abs_err": mean final |error| <= threshold
+    # None disables it; total_timesteps stays the cap.
+    "early_stop": None,
 }
 
 
@@ -77,7 +82,8 @@ class _EpisodeLogger:
                         row = {"episode": self.episode, "timesteps": self.num_timesteps,
                                "wall_s": round(time.monotonic() - self.t0, 1),
                                "return": round(float(self.ret[i]), 4), "length": int(self.len[i]),
-                               "final_abs_err": round(info["abs_err"], 4)}
+                               "final_abs_err": round(info["abs_err"], 4),
+                               "success": int(bool(info.get("success", False)))}
                         for k in weights:
                             row[f"term_{k}"] = round(info["episode_terms"][k], 4)
                         outer.rows.append(row)
@@ -93,12 +99,60 @@ class _EpisodeLogger:
         self.rows: list[dict] = []
         self.f = open(path, "w", newline="")
         self.writer = csv.DictWriter(self.f, fieldnames=["episode", "timesteps", "wall_s", "return", "length",
-                                                         "final_abs_err"] + [f"term_{k}" for k in weights])
+                                                         "final_abs_err", "success"] + [f"term_{k}" for k in weights])
         self.writer.writeheader()
         self.callback = CB()
 
     def close(self):
         self.f.close()
+
+
+class _EarlyStop:
+    """SB3 callback: stop once a rolling metric over recent episodes meets the target."""
+
+    def __init__(self, cfg: dict, rows: list[dict], n_envs: int = 1):
+        from stable_baselines3.common.callbacks import BaseCallback
+
+        outer = self
+        self.cfg = dict(cfg)
+        # with many envs a fixed window is only a few episodes per env: widen it so the
+        # criterion sees at least `episodes_per_env` (default 8) episodes from every env
+        self.cfg["window"] = max(int(cfg.get("window", 200)), int(cfg.get("episodes_per_env", 8)) * n_envs)
+        self.rows = rows
+        self.triggered_at: int | None = None
+
+        class CB(BaseCallback):
+            def _on_step(self) -> bool:
+                return True
+
+            def _on_rollout_end(self) -> None:
+                if outer.triggered_at is not None:
+                    return
+                window = int(outer.cfg.get("window", 200))
+                if self.num_timesteps < int(outer.cfg.get("min_timesteps", 0)) or len(outer.rows) < window:
+                    return
+                recent = outer.rows[-window:]
+                metric = outer.cfg.get("metric", "success_rate")
+                thr = float(outer.cfg["threshold"])
+                if metric == "success_rate":
+                    value = float(np.mean([r.get("success", 0.0) for r in recent]))
+                    ok = value >= thr
+                elif metric == "final_abs_err":
+                    value = float(np.mean([r["final_abs_err"] for r in recent]))
+                    ok = value <= thr
+                else:
+                    raise ValueError(f"unknown early_stop metric {metric!r}")
+                if ok:
+                    outer.triggered_at = self.num_timesteps
+                    print(f"early stop: {metric}={value:.3f} over last {window} episodes at {self.num_timesteps} steps", flush=True)
+                    self.model.env.reset_infos = None  # no-op; keeps mypy quiet
+                    raise _StopTraining()
+
+        self.callback = CB()
+
+
+class _StopTraining(Exception):
+    pass
 
 
 def export_onnx(model, c: Contract, path: str) -> None:
@@ -182,7 +236,8 @@ def evaluate(model, env, episodes: int) -> dict:
 
 def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unity",
         transport: str = "direct", host: str = "127.0.0.1", port: int = 10100,
-        n_envs: int = 1, entities: list[str] | None = None) -> int:
+        n_envs: int = 1, entities: list[str] | None = None, instances: int = 1,
+        spawn_urdf: str | None = None, spawn_spacing: float = 1.0, spawn_yaw: float = 0.0) -> int:
     from unirobolab import contract as contract_mod
     c = contract_mod.load(contract_path)
     task, train = load_config(config_path)
@@ -200,7 +255,14 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
         ns = c.ros.namespace if c.ros else "robot"
         if not entities:
             entities = [ns] if n_envs == 1 else [f"{ns}_{i}" for i in range(n_envs)]
-        env = DirectVecEnv(c, task, entities, host=host, port=port, seed=train["seed"])
+        envs = [DirectVecEnv(c, task, entities, host=host, port=port + k, seed=train["seed"] + 1000 * k,
+                             spawn_urdf=spawn_urdf, spawn_spacing=spawn_spacing, spawn_yaw=spawn_yaw)
+                for k in range(instances)]
+        if instances == 1:
+            env = envs[0]
+        else:
+            from unirobolab.direct.pool import PoolVecEnv
+            env = PoolVecEnv(envs)
         weights = env.task.weights
         n_envs = env.num_envs
     else:
@@ -212,6 +274,11 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
           f"{task.get('physics_steps_per_action', 1)} physics steps/action, "
           f"{task.get('episode_steps', 100)} steps/episode, reward {weights}", flush=True)
     logger = _EpisodeLogger(os.path.join(out_dir, "progress.csv"), weights, n_envs)
+    callbacks = [logger.callback]
+    early = None
+    if train.get("early_stop"):
+        early = _EarlyStop(train["early_stop"], logger.rows, n_envs)
+        callbacks.append(early.callback)
     model = PPO("MlpPolicy", env, seed=train["seed"], n_steps=train["n_steps"], batch_size=train["batch_size"],
                 n_epochs=train["n_epochs"], learning_rate=train["learning_rate"], gamma=train["gamma"],
                 gae_lambda=train["gae_lambda"], ent_coef=train["ent_coef"],
@@ -219,12 +286,17 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
                                "log_std_init": float(train["log_std_init"])},
                 verbose=0, device="cpu")
     t0 = time.monotonic()
+    stopped_early = False
     try:
-        model.learn(total_timesteps=int(train["total_timesteps"]), callback=logger.callback)
+        model.learn(total_timesteps=int(train["total_timesteps"]), callback=callbacks)
+    except _StopTraining:
+        stopped_early = True
     finally:
         logger.close()
     wall = time.monotonic() - t0
-    print(f"trained {train['total_timesteps']} steps in {wall:.0f}s ({train['total_timesteps']/wall:.1f} env steps/s)", flush=True)
+    steps_done = int(model.num_timesteps)
+    print(f"trained {steps_done} steps in {wall:.0f}s ({steps_done/wall:.1f} env steps/s)"
+          + (" [early stop]" if stopped_early else ""), flush=True)
 
     model.save(os.path.join(out_dir, "model.zip"))
     onnx_path = os.path.join(out_dir, "policy.onnx")

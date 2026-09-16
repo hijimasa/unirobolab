@@ -1,25 +1,44 @@
 {
-  "_note": "Differential-drive goal reaching. 10 Hz policy = 5 physics steps of 20 ms. Wheel velocity targets up to 10 rad/s (0.05 m wheels -> 0.5 m/s). Goals 1-2.5 m from the spawn point in any direction; success within 0.15 m ends the episode. Progress reward dominates; the reached bonus is paid once.",
+  "_note": "Differential-drive goal reaching. 10 Hz policy = 5 physics steps of 20 ms. Wheel velocity targets up to 10 rad/s (0.05 m wheels -> 0.5 m/s). Goals 1-2.5 m from the spawn point in any direction; success within 0.15 m ends the episode. Progress reward dominates; the reached bonus is paid once. early_stop ends the run once 90% of the last 200 episodes reached the goal (measured: reached at ~32k steps, so total_timesteps is only a cap).",
   "task": {
     "type": "base_target",
     "physics_steps_per_action": 5,
     "episode_steps": 150,
-    "goal_radius": [1.0, 2.5],
-    "goal_angle_deg": [-180, 180],
+    "goal_radius": [
+      1.0,
+      2.5
+    ],
+    "goal_angle_deg": [
+      -180,
+      180
+    ],
     "reach_radius": 0.15,
-    "reward": { "base_progress": 5.0, "base_reached": 10.0, "action_rate": -0.02 }
+    "reward": {
+      "base_progress": 5.0,
+      "base_reached": 10.0,
+      "action_rate": -0.02
+    }
   },
   "train": {
     "algo": "ppo",
-    "total_timesteps": 600000,
+    "total_timesteps": 300000,
     "seed": 0,
     "n_steps": 100,
     "batch_size": 400,
     "n_epochs": 10,
     "learning_rate": 0.0003,
     "gamma": 0.98,
-    "net_arch": [64, 64],
+    "net_arch": [
+      64,
+      64
+    ],
     "log_std_init": -1.0,
-    "eval_episodes": 3
+    "eval_episodes": 3,
+    "early_stop": {
+      "metric": "success_rate",
+      "threshold": 0.9,
+      "window": 200,
+      "min_timesteps": 20000
+    }
   }
 }

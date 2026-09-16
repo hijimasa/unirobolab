@@ -473,3 +473,39 @@ diffbot 16 体(1 物理ステップ 10 ms 前後)で `step_check` を回すと�
 
 学習曲線は `docs/images/diffbot_rl_learning_curve.png`。これで関節タスク(servo_demo)と
 基体タスク(diffbot)の両方で「直結で学習 → ROS 2 で配備」が通った。
+
+## 13. 学習時間: 早期終了、ROS 2 なしのプール、CPU の実態(2026-09-16)
+
+diffbot の 43 分は、収束(32k ステップ、125 s)の 19 倍の予算を与えていたのが主因だった。
+
+### 早期終了(`train.early_stop`)
+ロールアウト末に直近 `window` エピソード(env 数 × `episodes_per_env` 以上に自動で広げる)の
+`success_rate` か `final_abs_err` を見て打ち切る。`total_timesteps` は上限のまま。
+diffbot 16 体: 43 分 → **172 s**(56k ステップで成功率 92%)。
+
+### ROS 2 なしのプール(`scripts/sim_pool.sh` + 学習サーバの SPAWN op)
+学習サーバに SPAWN(URDF のパス、名前、位置・yaw)を足し、学習器が自分でロボットを並べる
+(`train --spawn-urdf`)。エンドポイントもスポーンサービスも要らない。`sim_pool.sh start K` で
+K プロセスをポート 10100.. に立て、`train --instances K --n-envs M` が `PoolVecEnv`(スレッドで
+K 本の接続を同時にステップ)で束ねる。xacro は `sim_pool.sh urdf <xacro> [args]`(`<gazebo>` を落とす。
+diffbot は `use_gnss:=false use_magnetic_guide:=false` も付けないと GNSS 配信が毎フレーム例外を投げる。
+ただし速度には効かなかった)。
+
+### CPU の実態と複数インスタンスの効き
+
+| 構成 | env steps/s | 備考 |
+|---|---|---|
+| K=1 × 16 体(既定ワーカー 29) | 465 | Job.Worker 29 本で約 15 コア分、メイン 1 コア |
+| K=1 × 16 体(ワーカー 2) | 205 | ワーカーを減らすと遅い = 物理は 1 シーン内で並列に解かれている |
+| K=4 × 16 体(既定) | 813 | 1.75 倍。116 本のワーカーが 30 コアを取り合う |
+| K=8 × 8 体(ワーカー 2〜3) | 909〜950 | 約 2 倍で頭打ち |
+
+- 1 インスタンスで既に十数コアを使う(PhysX の並列ソルバと、Unity のジョブワーカーのスピン待ち)。
+  16 体 × 5 ステップに 34 ms = 1 体 1 ステップ 0.43 ms で、これがこのマシンの物理の壁。
+  複数インスタンスは 2 倍程度までしか伸びない。`sim_pool.sh` は既定でワーカー数を cores/K に分ける。
+- 「同一ワールドに並べる」は既にそうしている(1 シーン K 体)。プロセス並列は「物理シーンの
+  ステップ呼び出しがメインスレッドで逐次」という制約を回避する手段で、ワールドを分けたい
+  わけではない。桁を変えるには GPU バッチ物理(Isaac Lab / Newton / MuJoCo Warp)側で学習する分業が要る
+  (`docs/unity6-gpu-physics-survey.md`)。
+- 計測の落とし穴: `ps` の %cpu は累積平均で、停止直前のプロセスを拾って「アイドルで 27 コア」と
+  誤認した。`top -d` の区間計測で見直した。

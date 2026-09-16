@@ -47,7 +47,12 @@ second on the servo demo with 16 robots (400k PPO steps in under 4 minutes, sett
 as direct joint-command topics and through ros2_control (the generator also emits the
 controller configuration). Base-state observations (velocity, gravity, goal in the body frame) work the same
 way: a differential-drive robot trained to reach goals in 16-robot batches passes
-sim2sim over ROS 2 with its pose coming from the ground-truth topic. The GUI is still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
+sim2sim over ROS 2 with its pose coming from the ground-truth topic. Training stops early once a rolling success criterion holds (the diffbot run went
+from 43 minutes to under 3), robots are spawned through the learning server so no ROS
+graph is needed during training, and several simulator processes can be pooled (about 2x
+on this machine: one process already fills most cores). See
+[docs/unity6-gpu-physics-survey.md](docs/unity6-gpu-physics-survey.md) for why GPU
+physics is not an option inside Unity 6. The GUI is still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
 the design, milestones and results.
 
 ## Layout

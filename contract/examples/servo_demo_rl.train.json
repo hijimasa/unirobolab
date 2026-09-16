@@ -27,6 +27,12 @@
       64
     ],
     "eval_episodes": 3,
-    "log_std_init": -1.5
+    "log_std_init": -1.5,
+    "early_stop": {
+      "metric": "final_abs_err",
+      "threshold": 0.03,
+      "window": 200,
+      "min_timesteps": 50000
+    }
   }
 }

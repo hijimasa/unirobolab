@@ -24,7 +24,8 @@ from unirobolab.task import Task
 
 class DirectVecEnv(VecEnv):
     def __init__(self, c: Contract, task_cfg: dict[str, Any], entities: list[str],
-                 host: str = "127.0.0.1", port: int = 10100, seed: int = 0) -> None:
+                 host: str = "127.0.0.1", port: int = 10100, seed: int = 0,
+                 spawn_urdf: str | None = None, spawn_spacing: float = 1.0, spawn_yaw: float = 0.0) -> None:
         self.c = c
         self.entities = list(entities)
         n = len(self.entities)
@@ -53,6 +54,15 @@ class DirectVecEnv(VecEnv):
         act_space = spaces.Box(clip[0], clip[1], (c.action_dim,), np.float32)
         super().__init__(n, obs_space, act_space)
 
+        if spawn_urdf:
+            # spawn the entities that are not there yet, in a row along +y of the instance
+            present = self.client.has_entities(self.entities)
+            for i, (name, ok) in enumerate(zip(self.entities, present)):
+                if not ok:
+                    got = self.client.spawn(name, spawn_urdf, 0.0, i * spawn_spacing, 0.0, spawn_yaw)
+                    if got != name:
+                        raise RuntimeError(f"spawned as {got!r}, expected {name!r}")
+            self.client.pause()
         info = self.client.info(self.entities)
         self.index: list[list[int]] = []
         for name, st in zip(self.entities, info):

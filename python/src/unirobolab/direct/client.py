@@ -3,7 +3,8 @@
 One TCP connection, one request in flight. Protocol (little-endian, one frame =
 uint32 length + payload):
 
-  request : uint8 op (1=INFO, 2=RESET, 3=STEP, 4=PING, 5=PAUSE)
+  request : uint8 op (1=INFO, 2=RESET, 3=STEP, 4=PING, 5=PAUSE, 6=SPAWN)
+            SPAWN: string name, string urdf_path, f64 x, y, z, yaw -> status + string entity_name
             uint16 n, n x string (uint16 len + UTF-8)                 entity names
             STEP only: uint32 steps, n x { uint16 m, m x { string joint, f32 pos, vel, eff } }
                        (NaN = leave that component untouched)
@@ -23,7 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-OP_INFO, OP_RESET, OP_STEP, OP_PING, OP_PAUSE = 1, 2, 3, 4, 5
+OP_INFO, OP_RESET, OP_STEP, OP_PING, OP_PAUSE, OP_SPAWN = 1, 2, 3, 4, 5, 6
 
 
 class LearningServerError(RuntimeError):
@@ -106,6 +107,27 @@ class LearningClient:
     def pause(self) -> None:
         """Same transition as set_simulation_state(PAUSED); stepping needs it."""
         self._parse_states(self._rpc(bytes([OP_PAUSE]) + struct.pack("<H", 0)))
+
+    def spawn(self, name: str, urdf_path: str, x: float = 0.0, y: float = 0.0, z: float = 0.0,
+              yaw: float = 0.0) -> str:
+        """Spawn a URDF (path as seen by the simulator process). Returns the entity name."""
+        payload = bytes([OP_SPAWN]) + self._s(name) + self._s(urdf_path) + struct.pack("<dddd", x, y, z, yaw)
+        resp = self._rpc(payload)
+        if resp[0] != 0:
+            (ln,) = struct.unpack_from("<H", resp, 1)
+            raise LearningServerError(resp[3:3 + ln].decode("utf-8"))
+        (ln,) = struct.unpack_from("<H", resp, 1)
+        return resp[3:3 + ln].decode("utf-8")
+
+    def has_entities(self, entities: list[str]) -> list[bool]:
+        """Which of the names exist (INFO one by one; a missing one raises)."""
+        out = []
+        for e in entities:
+            try:
+                self.info([e]); out.append(True)
+            except LearningServerError:
+                out.append(False)
+        return out
 
     def info(self, entities: list[str]) -> list[EntityState]:
         payload = bytes([OP_INFO]) + struct.pack("<H", len(entities)) + b"".join(self._s(e) for e in entities)

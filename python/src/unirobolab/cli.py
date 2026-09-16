@@ -70,7 +70,8 @@ def cmd_train(a) -> int:
     from unirobolab import train
     ents = a.entities.split(",") if a.entities else None
     return train.run(a.contract, a.config, a.out, a.backend, transport=a.transport,
-                     host=a.host, port=a.port, n_envs=a.n_envs, entities=ents)
+                     host=a.host, port=a.port, n_envs=a.n_envs, entities=ents, instances=a.instances,
+                     spawn_urdf=a.spawn_urdf, spawn_spacing=a.spawn_spacing, spawn_yaw=a.spawn_yaw)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -119,6 +120,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--port", type=int, default=10100, help="learning server port (direct)")
     s.add_argument("--n-envs", type=int, default=1, help="direct: entities <ns>_0..<n-1> in one scene")
     s.add_argument("--entities", help="direct: explicit comma-separated entity names")
+    s.add_argument("--instances", type=int, default=1,
+                   help="direct: simulator processes on ports port..port+K-1, each with --n-envs robots")
+    s.add_argument("--spawn-urdf", help="direct: spawn missing entities from this URDF (path as seen by the simulator)")
+    s.add_argument("--spawn-spacing", type=float, default=1.0, help="metres between spawned robots (along y)")
+    s.add_argument("--spawn-yaw", type=float, default=0.0)
     s.set_defaults(fn=cmd_train)
 
     a = p.parse_args(argv)
