@@ -84,10 +84,16 @@ UnitySensors / ROS-TCP-Connector / URDF-Importer が既にこの方式なので�
   improved patch friction)。sim2sim の物理を本体と揃えるため。`TimeManager` は
   既定の 0.02 s で本体と同じ。
 
-まだ本体の `Assets/Scripts/` 直下に残っているもの(Assembly-CSharp):
-`JointStatePub` / `JointStateSub` / `PhysicsRateController` / `SimulationControl` 系、
-ROS メッセージ(`Assets/RosMessages`)。これらは GUI とシーンに結びついているので、
-M1 で必要になった分だけ core パッケージとして切り出す。
+2026-09-16 にランタイム核も `Packages/SimulationCore`(`com.react-robot.simulation-core`、
+本体ブランチ core-package)へ切り出した。中身は `SimulationControl` とその partial
+(simulation_interfaces のサービス、エンティティ、ワールド、外乱、接触、学習サーバ)、
+`JointStatePub/Sub`、`GroundTruthPub`、`ClockPub`、`ObjectSpawner`、設定(`SimulationResources` /
+`SimulationSettings`)、ROS メッセージ(`Runtime/RosMessages`)、StandaloneFileBrowser、
+Resources(ROSConnection prefab、点群シェーダ)。本体の `Assets/Scripts` に残るのはシーン GUI
+(EntityListPanel、サイドバー、FPS/RTF 表示、カメラ、水面など)だけで、GUI は核を参照するが
+核は GUI を参照しない(EntityListPanel は自分で SimulationControl に付く)。
+`unity/UniRoboLab/Packages/manifest.json` は push 前なので `file:` で隣接 clone の
+`Packages/SimulationCore` を指す。push 後に git URL + ハッシュへ切り替える。
 
 ## 5. 名前と商標
 
@@ -580,10 +586,10 @@ Inference Engine(旧 Sentis)2.6 の ONNX 変換はエディタ専用(`Editor/ONN
   目標は `--goal` と stdin(`goal v1 v2 ...`、`stop`)。状態行を毎秒 JSON で stdout に出す。
 - **Policy パネル**(本体 `Assets/Scripts/PolicyPanel.cs`、ブランチ live-policy): 契約・ONNX・
   エンティティ・目標を入力し、Run で上のコマンドを子プロセスとして起動、Set goal で stdin、
-  Stop で終了。コマンドは `settings.policy_runner_command`(既定 `python3 -m unirobolab live`)と
-  `settings.policy_runner_env`(PYTHONPATH など)。学習サーバが無効なら案内を出す。
+  Stop で終了。コマンドは `unirobolab.policy_runner_command`(既定 `python3 -m unirobolab live`)と
+  `unirobolab.policy_runner_env`(PYTHONPATH など)。学習サーバが無効なら案内を出す。
   ヘッドレス検証用に `SIM_POLICY_AUTORUN="契約|ONNX|エンティティ|目標|秒数"`。
-  同梱予定の uv 環境の python を `policy_runner_command` に指すと、利用者は Python を意識しない。
+  同梱予定の uv 環境の python を `unirobolab.policy_runner_command` に指すと、利用者は Python を意識しない。
 
 結果(ROS 2 なし): servo_demo_rl の方策で目標 (0.5, 0.5) → 最終誤差 3.9 mrad、stdin で (−0.5, −0.5) に
 変更 → 1.4 mrad、25 Hz。diffbot_rl で (1.5, 0) → (0, 1.5)、8 s で 0.12 m、10 Hz。
@@ -620,7 +626,7 @@ diffbot_rl(車輪 12 rad/s、停止時ゼロ)も PASS(0.02 / 0.11 / 0.09 m)。
 
 - `scripts/setup_python.sh`: uv で `.venv` を作り `python/` を runtime extras 付きで入れる
   (`--training` で sb3 + CPU torch)。uv が無ければ公式インストーラで入れる。表示される
-  インタプリタのパスを本体の `settings.policy_runner_command` に書けば、Policy パネルから
+  インタプリタのパスを本体の `unirobolab.policy_runner_command` に書けば、Policy パネルから
   そのまま使える。`python/uv.lock` で依存を固定。
 - 本体側は、ブランチ base-state → learning-pool → live-policy を main にマージし、
   BuildLinuxPlayer でプレイヤーを作ってリリースに載せる(利用者は学習サーバ入りの
@@ -628,7 +634,7 @@ diffbot_rl(車輪 12 rad/s、停止時ゼロ)も PASS(0.02 / 0.11 / 0.09 m)。
 - 未確認: Windows / macOS(パスの引用と `/bin/sh` 依存が Policy パネルにある)、ROS 2 Humble。
 
 ### 利用者の流れ(想定)
-1. 本体のリリース版を展開し、`simulation_resources.json` に `learning_port` と `policy_runner_command` を書く
+1. UniRoboLab のプレイヤー (scripts/build_player.sh) を展開し、`simulation_resources.json` に `settings.learning_port` と `unirobolab.policy_runner_command` を書く
 2. `scripts/setup_python.sh` で Python 側を用意
 3. 学習: コンテナで `unirobolab train`、または Isaac Lab で学習して `import-isaaclab`
 4. Policy パネルか `unirobolab live` で動かして確認 → `gen` → コンテナで `sim2sim` → 実機へ
@@ -636,14 +642,14 @@ diffbot_rl(車輪 12 rad/s、停止時ゼロ)も PASS(0.02 / 0.11 / 0.09 m)。
 ## 18. GUI の残り(最小構成、2026-09-16)
 
 本体に UniRoboLab パネル(`Assets/Scripts/LabPanel.cs`、ブランチ gui-panels)を足した。
-Policy パネルと同じく実行時生成の uGUI で、外部処理は `settings.unirobolab_python`
+Policy パネルと同じく実行時生成の uGUI で、外部処理は `unirobolab.python`
 (既定 `python3`)の `-m unirobolab ...` を子プロセス(`ExternalProcess.cs`)で回す。
 
 | タブ | 機能 |
 |---|---|
 | Contract | 契約 JSON のパスを指定して Load / Save、Validate は `unirobolab show` の出力(配置表かエラー)を表示 |
 | Train | 契約・学習設定・スポーンする URDF・体数・出力先を指定して Start(`unirobolab train --transport direct --spawn-urdf`)。進行行を表示し、`progress.csv` から 2 秒ごとに学習曲線(最終誤差と収益)を描く。Stop で終了 |
-| Check | sim2sim の `report.json` を読んで各チェックの ok / FAIL と理由を表示。`settings.sim2sim_command` があれば Run で実行して結果を読み込む(ROS 2 環境が要るのでコンテナ内向け) |
+| Check | sim2sim の `report.json` を読んで各チェックの ok / FAIL と理由を表示。`unirobolab.sim2sim_command` があれば Run で実行して結果を読み込む(ROS 2 環境が要るのでコンテナ内向け) |
 
 ヘッドレス検証用に `SIM_TRAIN_AUTORUN="契約|学習設定|URDF|体数|出力"`。GUI の画面確認は
 ウィンドウ表示できる環境で。見た目は素の uGUI で、最小限の操作性に絞った。
@@ -714,3 +720,25 @@ Contract タブの「Draft from URDF」が同じものを呼んでエディタ�
   子プロセスの出力は UTF-8 で読む(ExternalProcess、PYTHONIOENCODING=utf-8)。
 - テスト: python/tests/test_explain.py(fixtures/reports の 5 件: 関節名違い、scale 違い、
   惜しい未到達、外乱 7 回、非常停止)。
+
+## 22. UniRoboLab 自前のプレイヤー(2026-09-16、軌道修正)
+
+それまでの GUI(Policy / UniRoboLab パネル)は本体プロジェクトのブランチに置き、本体の
+BuildLinuxPlayer で作ったプレイヤーを使っていた。これは「汎用シミュレータとは別の実行ファイル
+にする」という意図に反していたので、次の形に直した。
+
+- **本体(OSS)に残すもの**: 学習サーバ(op 1〜7、基体状態、SPAWN、PLAY)、captureDeltaTime の
+  刻み、learning_port / stepping_steps_per_frame 等の設定。どの RL ツールからも使える改良。
+  ブランチは base-state → learning-pool → core-package(核のパッケージ化)。
+- **unirobolab が持つもの**: `unity/UniRoboLab/Assets/UniRoboLab/` の LabPanel / PolicyPanel /
+  ExternalProcess / UniRoboLabConfig / LabCamera と、Editor の LabSceneBuilder(シーンをコードで
+  生成: 注視カメラ、平行光、地面、SimulationControl、EventSystem)、BuildPlayer、ProjectSetup
+  (TMP 必須リソースの取り込み)。本体ブランチ live-policy / gui-panels は削除した。
+- **設定**: unirobolab 固有の項目は `simulation_resources.json` の `unirobolab` 節
+  (`python`, `policy_runner_command`, `policy_runner_env`, `sim2sim_command`)。`settings` 節は核の
+  もの(physics_hz, target_fps, time_scale, learning_port, stepping_steps_per_frame ...)。
+- **ビルド**: `scripts/build_player.sh [出力] [linux|windows]` → `generated/player/UniRoboLab.x86_64`。
+  scripts/sim_pool.sh と servo_demo_bringup.sh の既定はこのプレイヤー(`SIM_DIR`, `SIM_BIN` で変更)。
+- **検証**: 本体 core-package のプレイヤーで servo / diffbot の sim2sim PASS、Play Mode テスト
+  77 件(76 合格、1 スキップ)。UniRoboLab プレイヤーで sim2sim 回帰、Task / Check タブの
+  ヘッドレス検証、窓ありの画面確認。

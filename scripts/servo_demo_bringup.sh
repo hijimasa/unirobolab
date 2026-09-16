@@ -6,6 +6,7 @@
 #
 # Derived from Unity_ROS2_sample/colcon_ws/scripts/bringup_test.sh (same ordering:
 # endpoint first, then the simulator, then start, then spawn).
+SIM_DIR_DEFAULT=/home/unity/unirobolab/generated/player   # UniRoboLab player (scripts/build_player.sh); SIM_BIN overrides the executable name
 source /home/unity/colcon_ws/scripts/simulator_version.sh
 SIM_DIR=${1:-${SIM_DIR:-$SIM_DIR_DEFAULT}}   # arg or SIM_DIR env, e.g. a player built from a branch
 NS=${NS:-ServoDemo}
@@ -13,7 +14,7 @@ NS=${NS:-ServoDemo}
 rm -f /dev/shm/fastrtps_* /dev/shm/sem.fastrtps_* 2>/dev/null
 export FASTRTPS_DEFAULT_PROFILES_FILE=/home/unity/colcon_ws/scripts/fastdds_udp_only.xml
 
-pkill -f 'Simulator.x8[6]_64' 2>/dev/null
+pkill -f "${SIM_BIN:-UniRoboLab}.x8[6]_64" 2>/dev/null
 pkill -f 'default_server_endpoin[t]' 2>/dev/null
 pkill -f 'spawn_entit[y]' 2>/dev/null
 pkill -f 'policy_nod[e]' 2>/dev/null
@@ -35,7 +36,7 @@ export SIMULATION_RESOURCES_CONFIG=${SIM_SETTINGS:-/home/unity/unirobolab/script
 # a caller that pipes this script (e.g. `| tail`) would otherwise never see EOF.
 # SIM_ARGS: e.g. "-batchmode" for training (no window, so no vsync cap on the frame rate;
 # rendering still works for camera sensors). Default: windowed.
-( cd "$SIM_DIR" && exec ./Unity_ROS2_Robot_Simulator.x86_64 ${SIM_ARGS:-} ) > /tmp/sim_bringup.log 2>&1 < /dev/null &
+( cd "$SIM_DIR" && exec "./${SIM_BIN:-UniRoboLab}.x86_64" ${SIM_ARGS:-} ) > /tmp/sim_bringup.log 2>&1 < /dev/null &
 sleep 14
 
 timeout 30 ros2 run simulation_ros2_utils set_sim_state --ros-args -p set_state:=start 2>&1 | tail -1

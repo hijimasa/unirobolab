@@ -42,6 +42,16 @@ Release/
 .DS_Store
 *.swp
 
+# ---- generated at build time (scripts/build_player.sh) ----
+unity/UniRoboLab/Assets/UniRoboLab/Scenes/Lab.unity
+unity/UniRoboLab/Assets/UniRoboLab/Scenes/Lab.unity.meta
+unity/UniRoboLab/Assets/UniRoboLab/Scenes/Ground.mat
+unity/UniRoboLab/Assets/UniRoboLab/Scenes/Ground.mat.meta
+unity/UniRoboLab/Assets/UniRoboLab/Scenes/GroundChecker.asset
+unity/UniRoboLab/Assets/UniRoboLab/Scenes/GroundChecker.asset.meta
+unity/UniRoboLab/Assets/UniRoboLab/Scenes/LabLighting.lighting
+unity/UniRoboLab/Assets/UniRoboLab/Scenes/LabLighting.lighting.meta
+
 # ---- editor state inside the Unity project ----
 unity/**/.vscode/
 

@@ -7,17 +7,12 @@
     "com.react-robot.hydrodynamics": "https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator.git?path=/Packages/Hydrodynamics#ff9f9a07f970f68435613782703fc7d1bdbcab10",
     "com.react-robot.sdf-world": "https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator.git?path=/Packages/SdfWorld#ff9f9a07f970f68435613782703fc7d1bdbcab10",
     "com.react-robot.servo-model": "https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator.git?path=/Packages/ServoModel#ff9f9a07f970f68435613782703fc7d1bdbcab10",
+    "com.react-robot.simulation-core": "file:../../../../Unity_ROS2_Robot_Simulator/Packages/SimulationCore",
     "com.react-robot.urdf-properties": "https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator.git?path=/Packages/UrdfProperties#ff9f9a07f970f68435613782703fc7d1bdbcab10",
-    "com.unity.ai.inference": "2.6.1",
     "com.unity.ai.navigation": "2.0.14",
     "com.unity.ide.rider": "3.0.40",
     "com.unity.ide.visualstudio": "2.0.26",
     "com.unity.inputsystem": "1.20.0",
-    "com.unity.render-pipelines.universal": "17.3.0",
-    "com.unity.robotics.ros-tcp-connector": "https://github.com/hijimasa/ROS-TCP-Connector.git?path=/com.unity.robotics.ros-tcp-connector#ae5f1f3eeb3fe1d49b145812195e2eca5f5b6732",
-    "com.unity.robotics.urdf-importer": "https://github.com/hijimasa/URDF-Importer.git?path=/com.unity.robotics.urdf-importer#dev-hijimasa",
-    "com.unity.test-framework": "1.6.0",
-    "com.unity.ugui": "2.0.0",
     "com.unity.modules.accessibility": "1.0.0",
     "com.unity.modules.adaptiveperformance": "1.0.0",
     "com.unity.modules.ai": "1.0.0",
@@ -51,6 +46,11 @@
     "com.unity.modules.video": "1.0.0",
     "com.unity.modules.vr": "1.0.0",
     "com.unity.modules.wind": "1.0.0",
-    "com.unity.modules.xr": "1.0.0"
+    "com.unity.modules.xr": "1.0.0",
+    "com.unity.render-pipelines.universal": "17.3.0",
+    "com.unity.robotics.ros-tcp-connector": "https://github.com/hijimasa/ROS-TCP-Connector.git?path=/com.unity.robotics.ros-tcp-connector#d85ed998cf7aaa8cf32b1a9e24097c04db9ff629",
+    "com.unity.robotics.urdf-importer": "https://github.com/hijimasa/URDF-Importer.git?path=/com.unity.robotics.urdf-importer#dev-hijimasa",
+    "com.unity.test-framework": "1.6.0",
+    "com.unity.ugui": "2.0.0"
   }
 }

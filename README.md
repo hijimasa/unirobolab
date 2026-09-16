@@ -29,7 +29,7 @@ scripts/setup_python.sh --training   # + stable-baselines3 and CPU torch for `un
 ```
 
 The script installs uv if needed and prints the interpreter path for the simulator's
-`settings.policy_runner_command`. Training and sim2sim against the simulator use the
+`unirobolab.policy_runner_command`. Training and sim2sim against the simulator use the
 container from `scripts/sim2sim_container.sh` (ROS 2 Jazzy). Linux only so far.
 
 ## Quick start (servo demo, wiring-check policy)

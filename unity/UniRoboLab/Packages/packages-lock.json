@@ -54,25 +54,25 @@
       "dependencies": {},
       "hash": "ff9f9a07f970f68435613782703fc7d1bdbcab10"
     },
+    "com.react-robot.simulation-core": {
+      "version": "file:../../../../Unity_ROS2_Robot_Simulator/Packages/SimulationCore",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {
+        "com.react-robot.servo-model": "1.0.0",
+        "com.react-robot.sdf-world": "1.0.0",
+        "com.react-robot.urdf-properties": "1.0.0",
+        "com.react-robot.hydrodynamics": "1.0.0",
+        "com.react-robot.aerodynamics": "1.0.0",
+        "com.unity.ugui": "2.0.0"
+      }
+    },
     "com.react-robot.urdf-properties": {
       "version": "https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator.git?path=/Packages/UrdfProperties#ff9f9a07f970f68435613782703fc7d1bdbcab10",
       "depth": 0,
       "source": "git",
       "dependencies": {},
       "hash": "ff9f9a07f970f68435613782703fc7d1bdbcab10"
-    },
-    "com.unity.ai.inference": {
-      "version": "2.6.1",
-      "depth": 0,
-      "source": "registry",
-      "dependencies": {
-        "com.unity.burst": "1.8.17",
-        "com.unity.dt.app-ui": "1.3.6",
-        "com.unity.collections": "2.4.3",
-        "com.unity.nuget.newtonsoft-json": "3.2.1",
-        "com.unity.modules.imageconversion": "1.0.0"
-      },
-      "url": "https://packages.unity.com"
     },
     "com.unity.ai.navigation": {
       "version": "2.0.14",
@@ -95,7 +95,7 @@
     },
     "com.unity.collections": {
       "version": "2.6.8",
-      "depth": 1,
+      "depth": 2,
       "source": "registry",
       "dependencies": {
         "com.unity.burst": "1.8.29",
@@ -103,18 +103,6 @@
         "com.unity.test-framework": "1.4.6",
         "com.unity.nuget.mono-cecil": "1.11.6",
         "com.unity.test-framework.performance": "3.0.3"
-      },
-      "url": "https://packages.unity.com"
-    },
-    "com.unity.dt.app-ui": {
-      "version": "2.1.1",
-      "depth": 1,
-      "source": "registry",
-      "dependencies": {
-        "com.unity.modules.physics": "1.0.0",
-        "com.unity.modules.androidjni": "1.0.0",
-        "com.unity.modules.uielements": "1.0.0",
-        "com.unity.modules.screencapture": "1.0.0"
       },
       "url": "https://packages.unity.com"
     },
@@ -167,14 +155,7 @@
     },
     "com.unity.nuget.mono-cecil": {
       "version": "1.11.6",
-      "depth": 2,
-      "source": "registry",
-      "dependencies": {},
-      "url": "https://packages.unity.com"
-    },
-    "com.unity.nuget.newtonsoft-json": {
-      "version": "3.2.2",
-      "depth": 1,
+      "depth": 3,
       "source": "registry",
       "dependencies": {},
       "url": "https://packages.unity.com"
@@ -212,11 +193,11 @@
       }
     },
     "com.unity.robotics.ros-tcp-connector": {
-      "version": "https://github.com/hijimasa/ROS-TCP-Connector.git?path=/com.unity.robotics.ros-tcp-connector#ae5f1f3eeb3fe1d49b145812195e2eca5f5b6732",
+      "version": "https://github.com/hijimasa/ROS-TCP-Connector.git?path=/com.unity.robotics.ros-tcp-connector#d85ed998cf7aaa8cf32b1a9e24097c04db9ff629",
       "depth": 0,
       "source": "git",
       "dependencies": {},
-      "hash": "ae5f1f3eeb3fe1d49b145812195e2eca5f5b6732"
+      "hash": "d85ed998cf7aaa8cf32b1a9e24097c04db9ff629"
     },
     "com.unity.robotics.urdf-importer": {
       "version": "https://github.com/hijimasa/URDF-Importer.git?path=/com.unity.robotics.urdf-importer#dev-hijimasa",
@@ -255,7 +236,7 @@
     },
     "com.unity.test-framework.performance": {
       "version": "3.5.0",
-      "depth": 2,
+      "depth": 3,
       "source": "registry",
       "dependencies": {
         "com.unity.test-framework": "1.1.33",

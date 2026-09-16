@@ -27,7 +27,7 @@ scripts/setup_python.sh              # uv で .venv を作り runtime extras を
 scripts/setup_python.sh --training   # + stable-baselines3 と CPU 版 torch (`unirobolab train`)
 ```
 
-uv が無ければ入れる。シミュレータの `settings.policy_runner_command` に書くインタプリタのパスを表示する。
+uv が無ければ入れる。シミュレータの `unirobolab.policy_runner_command` に書くインタプリタのパスを表示する。
 シミュレータ相手の学習と sim2sim は `scripts/sim2sim_container.sh` のコンテナ(ROS 2 Jazzy)で行う。
 Linux のみ確認済み。
 

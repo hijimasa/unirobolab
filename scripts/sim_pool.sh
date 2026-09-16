@@ -10,6 +10,7 @@
 # Environment: POOL_SETTINGS (simulation_resources.json for every instance, default
 # scripts/train_resources.json), POOL_SIM_ARGS (default "-batchmode -nographics
 # -job-worker-count <cores/K>"), POOL_URDF (/tmp/robot.urdf).
+SIM_DIR_DEFAULT=/home/unity/unirobolab/generated/player   # UniRoboLab player (scripts/build_player.sh); SIM_BIN overrides the executable name
 source /home/unity/colcon_ws/scripts/simulator_version.sh
 ACTION=${1:-status}
 POOL_DIR=${POOL_DIR:-/tmp/sim_pool}
@@ -18,7 +19,7 @@ POOL_URDF=${POOL_URDF:-/tmp/robot.urdf}
 
 case "$ACTION" in
   stop)
-    pkill -f 'Simulator.x8[6]_64' 2>/dev/null; sleep 2; echo "pool stopped"; exit 0 ;;
+    pkill -f "${SIM_BIN:-UniRoboLab}.x8[6]_64" 2>/dev/null; sleep 2; echo "pool stopped"; exit 0 ;;
   urdf)
     source "/opt/ros/${ROS_DISTRO:-jazzy}/setup.bash"; source /home/unity/colcon_ws/install/setup.sh
     shift; xacro "$1" use_sim:=true "${@:2}" > "$POOL_URDF"
@@ -31,7 +32,7 @@ PY
     echo "wrote $POOL_URDF"; exit 0 ;;
   start) ;;
   status)
-    echo "simulators: $(pgrep -fc 'Simulator.x8[6]_64')"; ls "$POOL_DIR" 2>/dev/null; exit 0 ;;
+    echo "simulators: $(pgrep -fc "${SIM_BIN:-UniRoboLab}.x8[6]_64")"; ls "$POOL_DIR" 2>/dev/null; exit 0 ;;
   *) echo "usage: $0 start K [sim_dir] | stop | urdf <xacro> [args] | status" >&2; exit 1 ;;
 esac
 
@@ -44,13 +45,13 @@ if [ -z "${POOL_SIM_ARGS+x}" ]; then
   W=$(( $(nproc) / K )); [ "$W" -lt 2 ] && W=2
   POOL_SIM_ARGS="-batchmode -nographics -job-worker-count $W"
 fi
-pkill -f 'Simulator.x8[6]_64' 2>/dev/null; sleep 2
+pkill -f "${SIM_BIN:-UniRoboLab}.x8[6]_64" 2>/dev/null; sleep 2
 mkdir -p "$POOL_DIR"
 export DISPLAY=${DISPLAY:-:1} XAUTHORITY=/.Xauthority
 for ((i=0; i<K; i++)); do
   PORT=$((PORT_BASE + i))
   ( cd "$SIM_DIR" && SIMULATION_RESOURCES_CONFIG="$SETTINGS" SIM_LEARNING_PORT=$PORT \
-      exec ./Unity_ROS2_Robot_Simulator.x86_64 ${POOL_SIM_ARGS-"-batchmode -nographics"} ) \
+      exec "./${SIM_BIN:-UniRoboLab}.x86_64" ${POOL_SIM_ARGS-"-batchmode -nographics"} ) \
       > "$POOL_DIR/sim_$i.log" 2>&1 < /dev/null &
 done
 # wait until every learning server answers
