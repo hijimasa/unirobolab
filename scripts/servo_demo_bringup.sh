@@ -41,15 +41,31 @@ sleep 14
 timeout 30 ros2 run simulation_ros2_utils set_sim_state --ros-args -p set_state:=start 2>&1 | tail -1
 sleep 2
 
-URDF=$(ros2 pkg prefix servo_demo_description)/share/servo_demo_description/robots/servo_demo.urdf
+# Robot: servo_demo by default. ROBOT_XACRO=<path> processes another description with
+# use_sim:=true (plus ROBOT_XACRO_ARGS); ROBOT_STRIP_SENSORS=1 drops <gazebo> sensor blocks
+# (lidar/camera cost per entity, not needed for joint/base-state training).
+if [ -n "${ROBOT_XACRO:-}" ]; then
+  URDF=/tmp/robot_${NS}.urdf
+  xacro "$ROBOT_XACRO" use_sim:=true ${ROBOT_XACRO_ARGS:-} > "$URDF"
+  if [ "${ROBOT_STRIP_SENSORS:-0}" = "1" ]; then
+    python3 - "$URDF" <<'PY'
+import sys, xml.etree.ElementTree as ET
+p = sys.argv[1]; t = ET.parse(p); r = t.getroot()
+for g in list(r.findall("gazebo")): r.remove(g)
+t.write(p)
+PY
+  fi
+else
+  URDF=$(ros2 pkg prefix servo_demo_description)/share/servo_demo_description/robots/servo_demo.urdf
+fi
 # N_ENTITIES > 1: spawn copies named ${NS}_0.. in a row (for the direct learning channel,
 # which addresses entities by name; their ROS topics all share /${NS}/... and are unused).
 N=${N_ENTITIES:-1}
 for ((i=0; i<N; i++)); do
   if [ "$N" -eq 1 ]; then NAME=$NS; else NAME="${NS}_$i"; fi
-  X=$(python3 -c "print($i * ${ENTITY_SPACING:-0.6})")
+  X=$(python3 -c "print(float($i * ${ENTITY_SPACING:-0.6}))")   # float: an int would mismatch the node's double parameter
   timeout 60 ros2 run simulation_ros2_utils spawn_entity --ros-args -r spawn_entity:=/spawn_entity \
-    -p urdf_path:="$URDF" -p robot_name:="$NAME" -p x:=$X -p y:=0.0 -p z:=0.0 -p R:=0.0 -p P:=0.0 -p Y:=-1.57 2>&1 | tail -1
+    -p urdf_path:="$URDF" -p robot_name:="$NAME" -p x:=$X -p y:=0.0 -p z:=${SPAWN_Z:-0.0} -p R:=0.0 -p P:=0.0 -p Y:=${SPAWN_YAW:--1.57} 2>&1 | tail -1
 done
 sleep 3
 timeout 8 ros2 topic echo /$NS/joint_states --once --field name 2>/dev/null | tr '\n' ' '; echo

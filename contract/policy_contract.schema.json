@@ -138,6 +138,10 @@
         "goal_topic": {
           "type": "string",
           "description": "Float64MultiArray feeding the 'command' observation. Default /<namespace>/policy/command. Status/debug topics live next to it."
+        },
+        "ground_truth_topic": {
+          "type": "string",
+          "description": "geometry_msgs/PoseStamped with the base pose (the simulator's ground truth; on a real robot, odometry/localization). Needed when the contract observes base_* / projected_gravity / imu_orientation / base_goal_xy. Default /<namespace>/ground_truth"
         }
       }
     }
@@ -179,8 +183,10 @@
             "imu_orientation",
             "last_action",
             "command",
-            "custom"
-          ]
+            "custom",
+            "base_goal_xy"
+          ],
+          "description": "base_* / projected_gravity / imu_orientation are in the body frame (ROS axes). base_goal_xy (size 2) is the task goal on the ground expressed in the body frame; the deployed node builds it from the goal topic (world x, y) and the robot pose."
         },
         "joints": {
           "type": "array",

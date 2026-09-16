@@ -12,7 +12,8 @@ package depends only on rclpy, numpy and onnxruntime.
 
 Topics (relative to the contract's ``ros`` section):
   sub  joint_states_topic         sensor_msgs/JointState
-  sub  goal_topic                 std_msgs/Float64MultiArray   (the 'command' observation)
+  sub  goal_topic                 std_msgs/Float64MultiArray   (the 'command' observation, or world x,y for base_goal_xy)
+  sub  ground_truth_topic         geometry_msgs/PoseStamped    (base_* observations; velocity by finite difference)
   pub  command_topic              sensor_msgs/JointState       (command_mode=joint_state_topic)
        /<ns>/<controller>/commands std_msgs/Float64MultiArray  (command_mode=ros2_control_commands)
   pub  <goal_topic dir>/status    std_msgs/String (JSON, 1 Hz)
@@ -30,10 +31,26 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, String
 
-SUPPORTED_OBS = {"joint_position", "joint_velocity", "joint_effort", "command", "last_action"}
+SUPPORTED_OBS = {"joint_position", "joint_velocity", "joint_effort", "command", "last_action",
+                 "base_lin_vel", "base_ang_vel", "projected_gravity", "imu_orientation", "base_goal_xy"}
+
+
+def quat_to_rot(q) -> np.ndarray:
+    """Rotation matrix of quaternion (x, y, z, w)."""
+    x, y, z, w = (float(v) for v in q)
+    n = x * x + y * y + z * z + w * w
+    if n < 1e-12:
+        return np.eye(3)
+    s = 2.0 / n
+    return np.array([
+        [1 - s * (y * y + z * z), s * (x * y - z * w), s * (x * z + y * w)],
+        [s * (x * y + z * w), 1 - s * (x * x + z * z), s * (y * z - x * w)],
+        [s * (x * z - y * w), s * (y * z + x * w), 1 - s * (x * x + y * y)],
+    ])
 
 
 def process_obs_term(v: np.ndarray, spec: dict) -> np.ndarray:
@@ -100,6 +117,10 @@ class PolicyNode(Node):
         self.command_mode = ros.get("command_mode", "joint_state_topic")
         self.goal_topic = ros.get("goal_topic", f"{prefix}/policy/command")
         self.controller_name = ros.get("controller_name")
+        self.ground_truth_topic = ros.get("ground_truth_topic", f"{prefix}/ground_truth")
+        self.needs_base = any(spec["source"] in ("base_lin_vel", "base_ang_vel", "projected_gravity",
+                                                  "imu_orientation", "base_goal_xy")
+                              for spec, _, _ in self.observations)
         status_base = self.goal_topic.rsplit("/", 1)[0] if "/" in self.goal_topic else ""
 
         # --- ONNX --------------------------------------------------------
@@ -122,6 +143,11 @@ class PolicyNode(Node):
         self.js_index: list[int] | None = None
         self.goal = np.zeros(self._goal_size(), dtype=np.float32)
         self.goal_received = False
+        # base state from the pose topic: velocity by finite difference of consecutive poses
+        self.base_pos = np.zeros(3); self.base_quat = np.array([0.0, 0.0, 0.0, 1.0])
+        self.base_lin_vel = np.zeros(3); self.base_ang_vel = np.zeros(3)
+        self.base_time: float | None = None
+        self.base_received = False
         self.last_action = np.zeros(self.action_dim, dtype=np.float32)
         self.frames: collections.deque = collections.deque(maxlen=self.history)
         self.steps = 0
@@ -133,6 +159,8 @@ class PolicyNode(Node):
                          history=HistoryPolicy.KEEP_LAST, depth=10)
         self.create_subscription(JointState, self.joint_states_topic, self._on_js, qos)
         self.create_subscription(Float64MultiArray, self.goal_topic, self._on_goal, qos)
+        if self.needs_base:
+            self.create_subscription(PoseStamped, self.ground_truth_topic, self._on_pose, qos)
         if self.command_mode == "joint_state_topic":
             self.pub_cmd = self.create_publisher(JointState, self.command_topic, qos)
         elif self.command_mode == "ros2_control_commands":
@@ -165,7 +193,7 @@ class PolicyNode(Node):
         if s in ("command", "custom"):
             return int(spec["size"])
         return {"base_lin_vel": 3, "base_ang_vel": 3, "projected_gravity": 3,
-                "imu_orientation": 4}.get(s, 0)
+                "imu_orientation": 4, "base_goal_xy": 2}.get(s, 0)
 
     def _action_size(self, spec: dict) -> int:
         t = spec["target"]
@@ -186,6 +214,9 @@ class PolicyNode(Node):
         for spec, n, _ in self.observations:
             if spec["source"] == "command":
                 return n
+        for spec, n, _ in self.observations:
+            if spec["source"] == "base_goal_xy":
+                return 2  # world x, y on the goal topic
         return 0
 
     def _fail(self, msg: str) -> None:
@@ -206,6 +237,20 @@ class PolicyNode(Node):
                 return
             self.js_index = [names.index(j) for j in self.joints]
             self.get_logger().info(f"joint index map resolved: {dict(zip(self.joints, self.js_index))}")
+
+    def _on_pose(self, msg: PoseStamped) -> None:
+        p = msg.pose.position; o = msg.pose.orientation
+        pos = np.array([p.x, p.y, p.z]); quat = np.array([o.x, o.y, o.z, o.w])
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self.base_time is not None and t > self.base_time + 1e-6:
+            dt = t - self.base_time
+            self.base_lin_vel = (pos - self.base_pos) / dt
+            # angular velocity from the relative rotation R_prev^T R_now (small-angle, world frame)
+            r_rel = quat_to_rot(self.base_quat).T @ quat_to_rot(quat)
+            w_body = np.array([r_rel[2, 1] - r_rel[1, 2], r_rel[0, 2] - r_rel[2, 0], r_rel[1, 0] - r_rel[0, 1]]) / (2 * dt)
+            self.base_ang_vel = quat_to_rot(self.base_quat) @ w_body
+        self.base_pos, self.base_quat, self.base_time = pos, quat, t
+        self.base_received = True
 
     def _on_goal(self, msg: Float64MultiArray) -> None:
         data = np.asarray(msg.data, dtype=np.float32)
@@ -244,6 +289,17 @@ class PolicyNode(Node):
                 v = self.goal
             elif s == "last_action":
                 v = self.last_action
+            elif s == "base_lin_vel":
+                v = quat_to_rot(self.base_quat).T @ self.base_lin_vel
+            elif s == "base_ang_vel":
+                v = quat_to_rot(self.base_quat).T @ self.base_ang_vel
+            elif s == "projected_gravity":
+                v = quat_to_rot(self.base_quat).T @ np.array([0.0, 0.0, -1.0])
+            elif s == "imu_orientation":
+                v = self.base_quat
+            elif s == "base_goal_xy":
+                d = np.array([self.goal[0] - self.base_pos[0], self.goal[1] - self.base_pos[1], 0.0])
+                v = (quat_to_rot(self.base_quat).T @ d)[:2]
             else:
                 v = np.zeros(n, dtype=np.float32)
             if v is None:
@@ -261,6 +317,8 @@ class PolicyNode(Node):
         now = time.monotonic()
         self.tick_times.append(now)
         if self.js is None or self.js_index is None:
+            return
+        if self.needs_base and not self.base_received:
             return
         self.obs_ages.append(now - self.js_time)
         frame = self._assemble()
@@ -325,6 +383,7 @@ class PolicyNode(Node):
             "steps": self.steps,
             "joints_ok": self.js_index is not None,
             "goal_received": self.goal_received,
+            "base_received": self.base_received if self.needs_base else None,
             # joint_states age as seen by the policy loop, over the last status window
             "obs_age_max_s": round(max(self.obs_ages), 4) if self.obs_ages else None,
             "obs_age_mean_s": round(float(np.mean(self.obs_ages)), 4) if self.obs_ages else None,

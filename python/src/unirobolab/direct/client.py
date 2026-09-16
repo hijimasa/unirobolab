@@ -8,7 +8,11 @@ uint32 length + payload):
             STEP only: uint32 steps, n x { uint16 m, m x { string joint, f32 pos, vel, eff } }
                        (NaN = leave that component untouched)
   response: uint8 status (0 = OK), else string error
-            OK: uint16 n, n x { uint16 k, k x { string joint, f64 pos, vel, eff } }, f64 sim_time
+            OK: uint16 n, n x { uint16 k, k x { string joint, f64 pos, vel, eff },
+                              f64 x 13 base state: pos xyz, quat xyzw, lin vel xyz, ang vel xyz
+                              (world frame, ROS axes) },
+                f64 sim_time (physics time)
+  RESET puts joints at zero and the base back at its spawn pose.
 """
 
 from __future__ import annotations
@@ -29,9 +33,13 @@ class LearningServerError(RuntimeError):
 @dataclass
 class EntityState:
     names: list[str]
-    position: np.ndarray
+    position: np.ndarray      # joint positions, contract-independent order (as reported)
     velocity: np.ndarray
     effort: np.ndarray
+    base_pos: np.ndarray      # world, ROS axes (x forward, y left, z up)
+    base_quat: np.ndarray     # x, y, z, w
+    base_lin_vel: np.ndarray  # world frame
+    base_ang_vel: np.ndarray  # world frame
 
 
 class LearningClient:
@@ -83,7 +91,9 @@ class LearningClient:
                 names.append(resp[off:off + ln].decode("utf-8")); off += ln
                 p, v, e = struct.unpack_from("<ddd", resp, off); off += 24
                 pos.append(p); vel.append(v); eff.append(e)
-            out.append(EntityState(names, np.asarray(pos), np.asarray(vel), np.asarray(eff)))
+            base = np.asarray(struct.unpack_from("<13d", resp, off)); off += 13 * 8
+            out.append(EntityState(names, np.asarray(pos), np.asarray(vel), np.asarray(eff),
+                                   base[0:3], base[3:7], base[7:10], base[10:13]))
         (sim_time,) = struct.unpack_from("<d", resp, off)
         return out, sim_time
 

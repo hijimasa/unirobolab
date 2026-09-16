@@ -45,7 +45,9 @@ to ONNX, packaged for ROS 2 and passes sim2sim on the servo demo (ideal joint er
 second on the servo demo with 16 robots (400k PPO steps in under 4 minutes, settled error
 0.006 rad, sim2sim PASS). ROS 2 stays the deployment and sim2sim path, both
 as direct joint-command topics and through ros2_control (the generator also emits the
-controller configuration). The GUI is still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
+controller configuration). Base-state observations (velocity, gravity, goal in the body frame) work the same
+way: a differential-drive robot trained to reach goals in 16-robot batches passes
+sim2sim over ROS 2 with its pose coming from the ground-truth topic. The GUI is still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
 the design, milestones and results.
 
 ## Layout

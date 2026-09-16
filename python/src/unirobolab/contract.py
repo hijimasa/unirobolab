@@ -20,6 +20,7 @@ FIXED_SIZE_OBS_SOURCES = {
     "base_ang_vel": 3,
     "projected_gravity": 3,
     "imu_orientation": 4,
+    "base_goal_xy": 2,
 }
 
 
@@ -72,6 +73,7 @@ class RosConfig:
     command_mode: str  # joint_state_topic | ros2_control_commands
     goal_topic: str
     controller_name: str | None = None
+    ground_truth_topic: str | None = None
 
 
 @dataclass
@@ -215,6 +217,7 @@ def from_dict(raw: dict[str, Any], path: str = "<memory>") -> Contract:
             command_mode=r.get("command_mode", "joint_state_topic"),
             goal_topic=r.get("goal_topic", f"{prefix}/policy/command"),
             controller_name=r.get("controller_name"),
+            ground_truth_topic=r.get("ground_truth_topic", f"{prefix}/ground_truth"),
         )
         if ros.command_mode == "ros2_control_commands" and not ros.controller_name:
             raise ContractError("ros.command_mode=ros2_control_commands needs ros.controller_name")

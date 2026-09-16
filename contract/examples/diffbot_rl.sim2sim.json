@@ -1,0 +1,10 @@
+{
+  "_note": "Goals are x,y offsets [m] from the pose where the robot starts the run (world frame, ROS axes). Pass = base within default_tolerance metres of the goal over the last settle_window_s of each hold. 10 Hz policy: max_obs_age_s 0.15 covers the 30 Hz ground-truth/joint_states publishing.",
+  "goals": [[1.5, 0.0], [0.0, 1.5], [-1.0, -1.0]],
+  "hold_s": 8.0,
+  "settle_window_s": 1.0,
+  "warmup_s": 3.0,
+  "default_tolerance": 0.25,
+  "rate_tolerance": 0.15,
+  "max_obs_age_s": 0.15
+}

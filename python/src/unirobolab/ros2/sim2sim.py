@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, String
 
@@ -75,6 +76,7 @@ class Recorder:
     actions: list[tuple] = field(default_factory=list)
     observations: list[tuple] = field(default_factory=list)
     js_names: list[str] | None = None
+    poses: list[tuple] = field(default_factory=list)          # (t, x, y, z)
 
 
 class Evaluator(Node):
@@ -90,6 +92,9 @@ class Evaluator(Node):
         self.create_subscription(Float64MultiArray, f"{base}/action", self._on_act, 50)
         self.create_subscription(Float64MultiArray, f"{base}/observation", self._on_obs, 50)
         self.pub_goal = self.create_publisher(Float64MultiArray, ros.goal_topic, 10)
+        self.base_task = bool(c.obs_terms_by_source("base_goal_xy"))
+        if self.base_task:
+            self.create_subscription(PoseStamped, ros.ground_truth_topic, self._on_pose, 50)
 
     def now(self) -> float:
         return time.monotonic() - self.t0
@@ -98,6 +103,13 @@ class Evaluator(Node):
         if self.rec.js_names is None:
             self.rec.js_names = list(m.name)
         self.rec.js_rows.append((self.now(), list(m.name), list(m.position), list(m.velocity)))
+
+    def _on_pose(self, m: PoseStamped) -> None:
+        p = m.pose.position
+        self.rec.poses.append((self.now(), p.x, p.y, p.z))
+
+    def latest_xy(self) -> np.ndarray | None:
+        return np.array(self.rec.poses[-1][1:3]) if self.rec.poses else None
 
     def _on_status(self, m: String) -> None:
         try:
@@ -176,6 +188,24 @@ def evaluate(c: Contract, sc: Scenario, rec: Recorder, phases: list[tuple[float,
     # tracking per phase
     track = []
     all_ok = True
+    base_task = bool(c.obs_terms_by_source("base_goal_xy"))
+    if base_task:
+        # goal = world x, y; pass when the base ends the hold within tolerance (metres)
+        for (t_start, t_end, goal) in phases:
+            pts = np.array([[x, y] for (t, x, y, z) in rec.poses if t_end - sc.settle_window_s <= t <= t_end])
+            row = {"goal": goal, "t_end": round(t_end, 2), "joints": {}}
+            if pts.size == 0:
+                row["joints"]["base"] = {"pass": False, "detail": "no ground truth in settle window"}
+                all_ok = False
+            else:
+                d = float(np.mean(np.linalg.norm(pts - np.asarray(goal[:2]), axis=1)))
+                ok = d <= sc.default_tolerance
+                all_ok &= ok
+                row["joints"]["base"] = {"pass": ok, "mean_abs_err": round(d, 4), "tol": sc.default_tolerance,
+                                         "q_mean": [round(float(v), 3) for v in pts.mean(axis=0)], "n": int(len(pts))}
+            track.append(row)
+        checks["tracking"] = {"pass": all_ok and bool(phases), "phases": track}
+        phases = []  # skip the joint loop below
     for (t_start, t_end, goal) in phases:
         win = _joint_positions(rec, act_joints, t_end - sc.settle_window_s, t_end)
         row = {"goal": goal, "t_end": round(t_end, 2), "joints": {}}
@@ -191,7 +221,8 @@ def evaluate(c: Contract, sc: Scenario, rec: Recorder, phases: list[tuple[float,
             row["joints"][j] = {"pass": ok, "mean_abs_err": round(err, 4), "tol": sc.tol(j),
                                 "q_mean": round(float(q.mean()), 4), "n": int(q.size)}
         track.append(row)
-    checks["tracking"] = {"pass": all_ok and bool(phases), "phases": track}
+    if not base_task:
+        checks["tracking"] = {"pass": all_ok and bool(phases), "phases": track}
 
     # finite
     bad = 0
@@ -240,7 +271,12 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
         if not rec.status:
             print(f"no status from policy node within {launch_timeout_s}s", file=sys.stderr)
         _spin_for(node, sc.warmup_s)
+        origin = node.latest_xy() if node.base_task else None
+        if node.base_task and origin is None:
+            print("no ground truth pose received; base goals cannot be placed", file=sys.stderr)
         for g in sc.goals:
+            if node.base_task and origin is not None:
+                g = [float(origin[0] + g[0]), float(origin[1] + g[1])]  # scenario goals are offsets
             t_start = node.now()
             # re-publish the goal a few times: a late subscriber must not miss it
             for _ in range(3):

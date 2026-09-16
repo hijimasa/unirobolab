@@ -40,7 +40,8 @@ M1 完了、M2 の第一段階完了: シミュレータ内で PPO 学習した�
 ROS 2 パッケージ化して servo_demo の sim2sim に合格(ideal_joint 誤差 1 センチラジアン未満)。
 学習は ROS 2 を通さない。本体の学習サーバ(`learning-server` ブランチ)が 1 シーンの K 体を
 1 往復でまとめてステップし、servo_demo で 16 体並列 1,850 env steps/s(PPO 400k ステップが 4 分弱、整定誤差 0.006 rad、sim2sim PASS)。ROS 2 は配備と sim2sim の経路で、関節指令トピック直結と
-ros2_control 経由(生成器がコントローラ設定も出す)の両方を確認済み。GUI はこれから。
+ros2_control 経由(生成器がコントローラ設定も出す)の両方を確認済み。基体の観測(速度・重力方向・基体座標系の目標)も同じ経路で扱え、差動二輪の目標到達を 16 体並列で
+学習した方策が、姿勢を ground_truth トピックから取る ROS 2 経路の sim2sim に合格している。GUI はこれから。
 設計・マイルストーン・結果は [docs/architecture.md](docs/architecture.md) を参照。
 
 ## 構成

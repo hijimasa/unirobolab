@@ -17,6 +17,7 @@ from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
 from unirobolab.contract import Contract
 from unirobolab.direct.client import LearningClient, LearningServerError
+from unirobolab.geometry import projected_gravity, quat_to_rot, world_to_body
 from unirobolab.obs_math import process_action_term, process_obs_term
 from unirobolab.task import Task
 
@@ -27,10 +28,15 @@ class DirectVecEnv(VecEnv):
         self.c = c
         self.entities = list(entities)
         n = len(self.entities)
-        self.cmd_term = c.obs_terms_by_source("command")[0]
+        cmds = c.obs_terms_by_source("command")
+        self.cmd_term = cmds[0] if cmds else None
         self.act_term = [t for t in c.actions if t.source == "joints"][0]
         self.act_joints = self.act_term.joints or c.joints
-        self.task = Task(task_cfg, self.cmd_term.size)
+        self.task = Task(task_cfg, self.cmd_term.size if self.cmd_term else 2)
+        if self.task.type == "joint_target" and self.cmd_term is None:
+            raise ValueError("joint_target task needs a 'command' observation term")
+        if self.task.type == "base_target" and not c.obs_terms_by_source("base_goal_xy"):
+            raise ValueError("base_target task needs a 'base_goal_xy' observation term")
         self.client = LearningClient(host, port)
         self.client.ping()
         try:
@@ -56,7 +62,10 @@ class DirectVecEnv(VecEnv):
             self.index.append([st.names.index(j) for j in c.joints])
         self.act_index = [c.joints.index(j) for j in self.act_joints]
 
-        self.goal = np.zeros((n, self.cmd_term.size), np.float32)
+        n_goal = self.cmd_term.size if self.cmd_term else 2
+        self.goal = np.zeros((n, n_goal), np.float32)   # joint goal, or world xy goal
+        self.spawn_xy = np.zeros((n, 2), np.float32)
+        self.prev_dist = np.zeros(n, np.float32)
         self.last_action = np.zeros((n, c.action_dim), np.float32)
         self.frames: list[list[np.ndarray]] = [[] for _ in range(n)]
         self.t = np.zeros(n, int)
@@ -89,6 +98,16 @@ class DirectVecEnv(VecEnv):
                 v = self.goal[i]
             elif s == "last_action":
                 v = self.last_action[i]
+            elif s == "base_lin_vel":
+                v = world_to_body(self.states[i].base_lin_vel, self.states[i].base_quat)
+            elif s == "base_ang_vel":
+                v = world_to_body(self.states[i].base_ang_vel, self.states[i].base_quat)
+            elif s == "projected_gravity":
+                v = projected_gravity(self.states[i].base_quat)
+            elif s == "imu_orientation":
+                v = self.states[i].base_quat
+            elif s == "base_goal_xy":
+                v = self._goal_body_xy(i)
             else:
                 raise ValueError(f"observation source {s!r} not supported by DirectVecEnv")
             frame[t.offset:t.end] = process_obs_term(v, t.spec)
@@ -105,8 +124,21 @@ class DirectVecEnv(VecEnv):
     def _q(self, i: int) -> np.ndarray:
         return self._joint(i, "position")[self.act_index]
 
+    def _goal_body_xy(self, i: int) -> np.ndarray:
+        st = self.states[i]
+        d = np.array([self.goal[i][0] - st.base_pos[0], self.goal[i][1] - st.base_pos[1], 0.0])
+        return (quat_to_rot(st.base_quat).T @ d)[:2]
+
+    def _dist(self, i: int) -> float:
+        return float(np.linalg.norm(self.goal[i][:2] - self.states[i].base_pos[:2]))
+
     def _begin_episode(self, i: int) -> None:
-        self.goal[i] = self.task.sample_goal(self.rng)
+        if self.task.type == "joint_target":
+            self.goal[i] = self.task.sample_joint_goal(self.rng)
+        else:
+            self.spawn_xy[i] = self.states[i].base_pos[:2]
+            self.goal[i] = self.task.sample_base_goal(self.rng, self.spawn_xy[i])
+            self.prev_dist[i] = self._dist(i)
         self.last_action[i] = 0.0
         self.frames[i] = []
         self.t[i] = 0
@@ -152,16 +184,26 @@ class DirectVecEnv(VecEnv):
             q = self._q(i)
             qd = (q - self.last_q[i]) / dt
             self.last_q[i] = q
-            goal = self.goal[i][: len(self.act_joints)]
-            r, contrib = self.task.reward(q, goal, qd, self.last_action[i], prev_actions[i])
+            if self.task.type == "joint_target":
+                goal = self.goal[i][: len(self.act_joints)]
+                r, contrib, reached = self.task.reward_joint(q, goal, qd, self.last_action[i], prev_actions[i])
+                info = {"goal": goal.copy(), "q": q.copy(), "abs_err": float(np.mean(np.abs(q - goal)))}
+            else:
+                dist = self._dist(i)
+                r, contrib, reached = self.task.reward_base(dist, self.prev_dist[i], qd,
+                                                            self.last_action[i], prev_actions[i])
+                self.prev_dist[i] = dist
+                info = {"goal": self.goal[i].copy(), "q": q.copy(), "abs_err": dist,
+                        "base_pos": self.states[i].base_pos.copy()}
             for k, v in contrib.items():
                 self.episode_terms[i][k] += v
             rewards[i] = r
             self.t[i] += 1
-            info = {"goal": goal.copy(), "q": q.copy(), "abs_err": float(np.mean(np.abs(q - goal)))}
-            if self.t[i] >= self.task.episode_steps:
+            if reached or self.t[i] >= self.task.episode_steps:
                 dones[i] = True
-                info["TimeLimit.truncated"] = True
+                if not reached:
+                    info["TimeLimit.truncated"] = True
+                info["success"] = bool(reached)
                 info["episode_terms"] = dict(self.episode_terms[i])
                 info["terminal_observation"] = self._obs(i)
                 to_reset.append(i)

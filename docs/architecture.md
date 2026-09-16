@@ -420,3 +420,56 @@ Unity は `maximumDeltaTime` を `fixedDeltaTime` 未満に絞れない(切り�
 2 ステップ/行動では 1 往復にフレームが 2 枚要る構造(要求の受付と応答)は変わらないので
 効きは 2 割強、10 ステップ/行動のような高周波物理・低周波制御では 3.5 倍。
 `scripts/train_resources.json` は k=8 にした。
+
+## 12. 関節以外の観測: 基体の姿勢・速度と移動ロボット(2026-09-16)
+
+学習サーバの応答に、エンティティごとの基体状態(位置 xyz、姿勢 xyzw、線速度・角速度、
+いずれも ROS 座標系・world)を足した(本体ブランチ base-state)。`get_entity_state` と同じ
+`BuildEntityState` から取る。RESET は関節のゼロ姿勢化に加えて基体をスポーン時の姿勢に
+置き直す(`reset_simulation` SCOPE_STATE のエンティティ単位版)。
+
+契約の観測ソース `base_lin_vel` / `base_ang_vel` / `projected_gravity` / `imu_orientation` を
+学習環境と配備ノードの両方で実装した(いずれも基体座標系)。新しく `base_goal_xy`(2)を足した:
+地面上の目標点を基体座標系で見た相対ベクトルで、配備ノードは目標トピックの world (x, y) と
+姿勢トピック(`ros.ground_truth_topic`、PoseStamped。実機では自己位置推定に差し替える)から作る。
+速度はノード側では姿勢の差分で作る。
+
+タスク種別 `base_target`(`task.py`): スポーン点の周り半径 1〜2.5 m に目標を引き、
+`base_progress`(距離の減少)、`base_reached`(到達ボーナス、到達で終了)、`action_rate` で報酬。
+`contract/examples/diffbot_rl.json`(差動二輪、車輪速度指令 ±10 rad/s、10 Hz、5 物理ステップ/行動)。
+
+立ち上げは `ROBOT_XACRO` で任意の xacro を `use_sim:=true` で展開し、`ROBOT_STRIP_SENSORS=1` で
+`<gazebo>` 要素(LiDAR・カメラ)を落として体数分の負荷を避ける。16 体を 6 m 間隔で並べる。
+
+落とし穴: スポーン位置を `x:=0` のように整数で渡すと spawn_entity の double パラメータと
+型不一致で落ちる(`float()` で出す)。servo_demo では間隔 0.6 で偶然 float だった。
+
+計測: 16 体の diffbot で 1 往復 60 ms(5 物理ステップ)。servo_demo の 4 ms と違い、
+地面と接触する 16 体の物理そのものが 1 ステップ 10 ms 前後かかる。
+258 env steps/s。ソルバ反復(settings.solver_iterations)を下げる余地はある。
+
+### 発見: 従来の step_simulation も物理が重いと要求より多く進んでいた
+
+diffbot 16 体(1 物理ステップ 10 ms 前後)で `step_check` を回すと、チャンク進行なし
+(`stepping_steps_per_frame=1`、従来設計そのまま)でも 3 要求で 4 回、100 要求で 107 回進んだ。
+原因は 11 章と同じで、`maximumDeltaTime = fixedDeltaTime / time_scale` は Unity に
+`fixedDeltaTime` へ切り上げられ、実フレーム 80 ms × time_scale 10 で 1 フレームに数ステップ分が
+積まれる。servo_demo はフレームが 2.5 ms と軽く、偶然 1 ステップに収まっていた。
+最後の 1 フレーム 1 ステップの刻みも `captureDeltaTime = fixedDeltaTime` に固定して解決
+(ステップ中は time_scale を使わない)。`step_simulation` / `simulate_steps`(ROS 2 経路)にも
+同じ修正が効く。
+
+### 結果: diffbot の目標到達を直結で学習し、ROS 2 経路の sim2sim で通す(2026-09-16)
+
+`unirobolab train contract/examples/diffbot_rl.json --config contract/examples/diffbot_rl.train.json
+--transport direct --n-envs 16`(600k ステップ、2,576 s、233 env steps/s):
+
+- 学習中の最終距離は 80 エピソードで 1.9 m → 0.32 m、以後 0.11 m 前後(到達半径 0.15 m で終了)。
+  エピソード長は平均 19 ステップ(1.9 s)。決定論評価の最終距離 0.10 m。
+- sim2sim(ROS 2 トピック経路、`ros.ground_truth_topic` から基体観測、10 Hz): **PASS**。
+  目標 3 点(前 1.5 m、左 1.5 m、後左 1.4 m)で最終距離 0.08 / 0.22 / 0.12 m(許容 0.25 m)。
+- 途中で sim2sim が「ONNX 入力 12 ≠ 契約 10」で FAIL した。配備ノードの観測サイズ表に
+  `base_goal_xy` が無かったためで、契約と実装のずれを sim2sim が捕まえた例。
+
+学習曲線は `docs/images/diffbot_rl_learning_curve.png`。これで関節タスク(servo_demo)と
+基体タスク(diffbot)の両方で「直結で学習 → ROS 2 で配備」が通った。
