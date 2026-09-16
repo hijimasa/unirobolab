@@ -4,7 +4,7 @@ import pathlib
 
 import pytest
 
-from unirobolab.deploy import deploy_guide, ros_set
+from unirobolab.deploy import deploy_guide, deploy_summary, ros_set
 
 EX = pathlib.Path(__file__).parents[2] / "contract" / "examples"
 
@@ -40,3 +40,9 @@ def test_guide_ros2_control_and_base_task():
     text = deploy_guide(base, lang="en")
     assert "/diffbot/odom" in text and "/diffbot/goal" in text and "/diffbot/joint_command" in text
     assert "12" in text   # max_joint_speed from the example's safety section
+
+
+def test_summary_is_short_and_names_topics():
+    raw = json.load(open(EX / "diffbot_rl.json"))
+    text = deploy_summary(raw, lang="ja")
+    assert len(text.splitlines()) <= 8 and "/diffbot/joint_states" in text and "/diffbot/estop" in text and "ros2 launch" in text

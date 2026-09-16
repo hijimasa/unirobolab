@@ -179,8 +179,9 @@ def cmd_ros_set(a) -> int:
 
 def cmd_deploy_guide(a) -> int:
     import json as _json
-    from .deploy import deploy_guide
-    text = deploy_guide(_json.load(open(a.contract)), a.package, a.lang)
+    from .deploy import deploy_guide, deploy_summary
+    raw = _json.load(open(a.contract))
+    text = deploy_summary(raw, a.package, a.lang) if a.summary else deploy_guide(raw, a.package, a.lang)
     if a.out:
         os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
         with open(a.out, "w") as f:
@@ -317,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--package", help="generated package name (default <name>_policy)")
     s.add_argument("--lang", default="ja", choices=["ja", "en"])
     s.add_argument("--out", help="write to this file instead of stdout")
+    s.add_argument("--summary", action="store_true", help="short plain-text summary for the panel instead of the Markdown guide")
     s.set_defaults(fn=cmd_deploy_guide)
 
     s = sub.add_parser("task-show", help="print the light-user fields of a task config as JSON")

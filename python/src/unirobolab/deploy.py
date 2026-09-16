@@ -173,3 +173,37 @@ def deploy_guide(raw: dict[str, Any], package: str | None = None, lang: str = "j
               f"3. `ros2 topic echo {t['joint_states']}` and `ros2 topic hz {t['command']}`: commands at {rate:g} Hz.",
               "4. Try e-stop and resume once.", "5. Restore the caps and run the real goals; if it fails, go back to the Check tab's next steps.", ""]
     return "\n".join(L)
+
+
+def deploy_summary(raw: dict[str, Any], package: str | None = None, lang: str = "ja") -> str:
+    """パネルに収まる要約 (10 行程度)。全文は deploy_guide (DEPLOY.md)。"""
+    ja = lang != "en"
+    name = raw.get("name", "policy")
+    pkg = package or f"{name}_policy"
+    ns = raw.get("ros", {}).get("namespace", "robot")
+    t = _topics(raw)
+    safety = raw.get("safety", {})
+    L = []
+    L.append(("接続: " if ja else "connect: ") + f"joint_states {t['joint_states']}  |  " + ("指令 " if ja else "command ") + t["command"])
+    extra = [f"{k} {t[k]}" for k in ("goal", "odom", "imu", "cmd_vel") if k in t]
+    if extra:
+        L.append("        " + "  |  ".join(extra))
+    L.append(("非常停止: " if ja else "e-stop: ") + t["estop"] + (" (true で停止、浮かせて先に試す)" if ja else " (true stops; test with the robot lifted)"))
+    caps = []
+    if safety.get("max_joint_speed") is not None:
+        caps.append(("関節速度 " if ja else "joint speed ") + json.dumps(safety["max_joint_speed"]))
+    if safety.get("max_joint_effort") is not None:
+        caps.append(("トルク " if ja else "effort ") + json.dumps(safety["max_joint_effort"]))
+    if safety.get("max_base_speed"):
+        v = safety["max_base_speed"]
+        caps.append(("台車 " if ja else "base ") + f"{v[0]:g} m/s, {v[1]:g} rad/s")
+    if safety.get("joint_limits"):
+        caps.append(("可動範囲 " if ja else "limits ") + f"{len(safety['joint_limits'])} " + ("関節" if ja else "joints"))
+    L.append(("上限: " if ja else "caps: ") + (", ".join(caps) if caps else ("なし (契約の safety に書く)" if ja else "none (set them in the contract's safety section)")))
+    stop = ("保持" if ja else "hold") if safety.get("stop_action", "hold") == "hold" else ("ゼロ指令" if ja else "zero")
+    L.append((f"鮮度 {safety.get('max_obs_age_s', 0.2):g} s / 立ち上がり {safety.get('ramp_in_s', 1.0):g} s / 停止時 " if ja
+              else f"freshness {safety.get('max_obs_age_s', 0.2):g} s / ramp-in {safety.get('ramp_in_s', 1.0):g} s / stop: ") + stop)
+    L.append(("起動: " if ja else "launch: ") + f"colcon build --packages-select {pkg} && ros2 launch {pkg} policy.launch.py ns:={ns}")
+    L.append(("手順の全文: <パッケージ>/DEPLOY.md (sim2sim 合格 → 浮かせて非常停止 → 上限を下げて初回 → 本番)" if ja
+              else "full procedure: <package>/DEPLOY.md (sim2sim pass -> e-stop lifted -> first run with low caps -> real goals)"))
+    return "\n".join(L)
