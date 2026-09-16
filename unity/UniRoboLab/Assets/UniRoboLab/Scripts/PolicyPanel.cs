@@ -251,7 +251,7 @@ public class PolicyPanel : MonoBehaviour
         rt.SetParent(canvasRt, false);
         rt.anchorMin = new Vector2(0f, 0f); rt.anchorMax = new Vector2(0f, 0f); rt.pivot = new Vector2(0f, 0f);
         rt.anchoredPosition = new Vector2(12f, 12f);
-        rt.sizeDelta = new Vector2(380f, 300f);
+        rt.sizeDelta = new Vector2(380f, 285f);
         panel.GetComponent<Image>().color = PanelColor;
         var layout = panel.GetComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(10, 10, 8, 8); layout.spacing = 4f;

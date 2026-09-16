@@ -755,4 +755,5 @@ BuildLinuxPlayer で作ったプレイヤーを使っていた。これは「汎
 - 次の一手の規則: 進捗 30% 以上で成功率 0 → 目標範囲を狭める / 制限時間を延ばす。進捗 50% 以上で
   直近 window の誤差が前の window より 20% 以上悪化 (かつ目標未達) → 学習率を下げる。進捗 70% 以上で
   誤差が変わらず目標の 1.5 倍以上 → 許容誤差を広げる / 制限時間を延ばす。
-- テスト: python/tests/test_status.py。
+- テスト: python/tests/test_status.py。画面: docs/images/gui_task_training.png (学習中の Task タブ)。
+  SIM_GUI_SCREENSHOT_DELAY で撮影までの秒数を変えられる。

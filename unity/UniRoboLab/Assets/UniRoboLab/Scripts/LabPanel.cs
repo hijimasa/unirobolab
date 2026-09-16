@@ -48,7 +48,7 @@ public class LabPanel : MonoBehaviour
     TMP_InputField m_TaskContract, m_TaskTrain;
     TMP_Text m_TaskType, m_TaskStatus, m_TaskGoalLabel, m_TaskGoalMaxLabel, m_TaskTolLabel, m_TaskTimeLabel;
     Slider m_TaskGoal, m_TaskGoalMax, m_TaskTol, m_TaskTime;
-    GameObject m_TaskGoalMaxRow;
+    GameObject m_TaskGoalMaxRow, m_TaskExpert;
     bool m_TaskIsBase;
     ExternalProcess m_TaskProc;
     bool m_TaskReadPending;
@@ -61,7 +61,7 @@ public class LabPanel : MonoBehaviour
     GameObject m_CheckExpert;
     ExternalProcess m_Explain;
     public const string CheckAutorunEnvVar = "SIM_CHECK_AUTORUN";
-    /// <summary>画面確認用: SIM_GUI_SCREENSHOT=<png> で起動 8 秒後に画面を保存する。</summary>
+    /// <summary>画面確認用: SIM_GUI_SCREENSHOT=<png> で起動 8 秒後 (SIM_GUI_SCREENSHOT_DELAY 秒後) に画面を保存する。</summary>
     public const string ScreenshotEnvVar = "SIM_GUI_SCREENSHOT";
     float m_ScreenshotAt = -1f;
     static bool s_JapaneseFont;   // OS の日本語フォントを TMP のフォールバックに登録できたか
@@ -136,7 +136,11 @@ public class LabPanel : MonoBehaviour
             }
             else Debug.LogError($"[LabPanel] {TaskAutorunEnvVar} は '契約|学習設定|URDF' の形");
         }
-        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(ScreenshotEnvVar))) m_ScreenshotAt = Time.realtimeSinceStartup + 8f;
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(ScreenshotEnvVar)))
+        {
+            float delay = float.TryParse(Environment.GetEnvironmentVariable("SIM_GUI_SCREENSHOT_DELAY"), out float d) ? d : 8f;
+            m_ScreenshotAt = Time.realtimeSinceStartup + delay;
+        }
         string checkRun = Environment.GetEnvironmentVariable(CheckAutorunEnvVar);
         if (!string.IsNullOrEmpty(checkRun))
         {
@@ -203,6 +207,7 @@ public class LabPanel : MonoBehaviour
         cmd.Append(" 2>&1");
         m_Train = Launch(cmd.ToString());
         m_CurvePoints = 0;
+        m_StatusDir = outDir; m_TaskCurvePoints = 0; m_StatusNextAt = 0f;
         SetTrainStatus("training started");
     }
 
@@ -217,8 +222,92 @@ public class LabPanel : MonoBehaviour
     void SetTrainStatus(string s)
     {
         if (m_TrainStatus != null) m_TrainStatus.text = s;
-        if (m_TaskStatus != null && m_Tabs.TryGetValue("Task", out GameObject t) && t.activeSelf) m_TaskStatus.text = s;
+        if (m_TaskStatus != null && s.StartsWith("training")) m_TaskStatus.text = s;   // 生のログ行はライト層に出さない
         if (Application.isBatchMode) Debug.Log("[LabPanel/train] " + s);
+    }
+
+    /// <summary>
+    /// 学習中は 1 秒ごとに status.json を `unirobolab train-status` に通して平易な文にし、
+    /// progress.csv から誤差 (青) と成功率 (緑、移動平均) の曲線を Task タブに描く。
+    /// </summary>
+    void PollTrainStatus()
+    {
+        if (string.IsNullOrEmpty(m_StatusDir)) return;
+        if (m_StatusProc != null)
+        {
+            if (!m_StatusProc.HasExited) return;
+            m_StatusProc.WaitForExit();
+            var sb = new StringBuilder();
+            while (m_StatusProc.TryDequeue(out string l)) sb.AppendLine(l);
+            string text = sb.ToString().Trim();
+            bool ok = m_StatusProc.ExitCode == 0;
+            m_StatusProc = null;
+            if (ok && text.Length > 0)
+            {
+                if (m_TaskProgress != null) m_TaskProgress.text = text;
+                if (Application.isBatchMode) Debug.Log("[LabPanel/status] " + text.Replace('\n', ' '));
+                if (text.StartsWith("学習が終わりました") || text.StartsWith("training finished")) m_StatusDir = null;
+            }
+            RedrawTaskCurve();
+            return;
+        }
+        bool training = m_Train != null && !m_Train.HasExited;
+        if (!training && m_StatusNextAt < 0f) return;          // 終了後に 1 回だけ読む
+        if (Time.realtimeSinceStartup < m_StatusNextAt) return;
+        m_StatusNextAt = training ? Time.realtimeSinceStartup + 1f : -1f;
+        string path = Path.Combine(m_StatusDir, "status.json");
+        if (!File.Exists(path)) return;
+        m_StatusProc = Launch($"{ExternalProcess.UnirobolabPython()} -m unirobolab train-status {ExternalProcess.Quote(path)} --lang {(s_JapaneseFont ? "ja" : "en")} 2>&1");
+    }
+
+    void RedrawTaskCurve()
+    {
+        string dir = m_StatusDir ?? (m_TrainOut != null ? m_TrainOut.text : m_AutorunOut);
+        if (string.IsNullOrEmpty(dir)) return;
+        string path = Path.Combine(dir, "progress.csv");
+        if (!File.Exists(path) || m_TaskCurveTex == null) return;
+        var err = new List<float>(); var suc = new List<float>();
+        try
+        {
+            using var r = new StreamReader(path);
+            string header = r.ReadLine(); if (header == null) return;
+            string[] cols = header.Split(',');
+            int iErr = Array.IndexOf(cols, "final_abs_err"), iSuc = Array.IndexOf(cols, "success");
+            string line;
+            while ((line = r.ReadLine()) != null)
+            {
+                string[] f = line.Split(',');
+                if (f.Length <= Math.Max(iErr, iSuc)) continue;
+                if (float.TryParse(f[iErr], out float e)) { err.Add(e); suc.Add(iSuc >= 0 && float.TryParse(f[iSuc], out float sv) ? sv : 0f); }
+            }
+        }
+        catch (IOException) { return; }
+        if (err.Count == 0 || err.Count == m_TaskCurvePoints) return;
+        m_TaskCurvePoints = err.Count;
+        // 成功率は直近 (n/10, 最低 10) エピソードの移動平均
+        int win = Mathf.Max(10, err.Count / 10);
+        var rate = new List<float>(err.Count);
+        float acc = 0f;
+        for (int i = 0; i < suc.Count; i++) { acc += suc[i]; if (i >= win) acc -= suc[i - win]; rate.Add(acc / Mathf.Min(win, i + 1)); }
+        int w = m_TaskCurveTex.width, h = m_TaskCurveTex.height;
+        var px = new Color32[w * h];
+        for (int i = 0; i < px.Length; i++) px[i] = new Color32(20, 20, 24, 255);
+        void Plot(List<float> v, Color32 c, float lo, float hi)
+        {
+            if (hi - lo < 1e-6f) hi = lo + 1e-6f;
+            for (int x = 0; x < w; x++)
+            {
+                int i0 = x * v.Count / w, i1 = Mathf.Min(v.Count, (x + 1) * v.Count / w);
+                if (i1 <= i0) i1 = i0 + 1;
+                float m = 0f; for (int i = i0; i < i1 && i < v.Count; i++) m += v[i]; m /= (i1 - i0);
+                int y = Mathf.Clamp((int)((m - lo) / (hi - lo) * (h - 1)), 0, h - 1);
+                px[y * w + x] = c; if (y > 0) px[(y - 1) * w + x] = c;
+            }
+        }
+        float eHi = 0f; foreach (float e in err) eHi = Mathf.Max(eHi, e);
+        Plot(rate, new Color32(90, 220, 120, 255), 0f, 1f);
+        Plot(err, new Color32(90, 160, 255, 255), 0f, eHi);
+        m_TaskCurveTex.SetPixels32(px); m_TaskCurveTex.Apply();
     }
 
     /// <summary>progress.csv の final_abs_err (青) と return (橙、正規化) をエピソード順に描く。</summary>
@@ -410,6 +499,7 @@ public class LabPanel : MonoBehaviour
                 }
             }
         }
+        PollTrainStatus();
         if (m_Train != null)
         {
             last = null;
@@ -459,7 +549,7 @@ public class LabPanel : MonoBehaviour
         return port;
     }
 
-    void OnApplicationQuit() { StopTraining(); m_Check?.Stop(); m_Validate?.Stop(); m_Explain?.Stop(); m_TaskProc?.Stop(); }
+    void OnApplicationQuit() { StopTraining(); m_Check?.Stop(); m_Validate?.Stop(); m_Explain?.Stop(); m_TaskProc?.Stop(); m_StatusProc?.Stop(); }
 
     // ======================================================================= ui
     void BuildUi()
@@ -474,8 +564,8 @@ public class LabPanel : MonoBehaviour
         var rt = panel.GetComponent<RectTransform>();
         rt.SetParent(canvasRt, false);
         rt.anchorMin = rt.anchorMax = new Vector2(0f, 0f); rt.pivot = new Vector2(0f, 0f);
-        rt.anchoredPosition = new Vector2(12f, 330f);
-        rt.sizeDelta = new Vector2(440f, 430f);
+        rt.anchoredPosition = new Vector2(12f, 305f);
+        rt.sizeDelta = new Vector2(440f, 455f);
         panel.GetComponent<Image>().color = PanelColor;
         var layout = panel.GetComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(10, 10, 8, 8); layout.spacing = 4f;
@@ -511,6 +601,7 @@ public class LabPanel : MonoBehaviour
         m_ExpertShown = !m_ExpertShown;
         foreach (GameObject b in m_ExpertTabButtons) b.SetActive(m_ExpertShown);
         if (m_CheckExpert != null) m_CheckExpert.SetActive(m_ExpertShown);
+        if (m_TaskExpert != null) m_TaskExpert.SetActive(m_ExpertShown);
         if (!m_ExpertShown && !m_Tabs["Check"].activeSelf) ShowTab("Task");
     }
 
@@ -520,8 +611,11 @@ public class LabPanel : MonoBehaviour
         GameObject tab = Column(parent, "TaskTab");
         Label(tab.transform, "1. Robot: contract (Draft from URDF in 詳細 > Contract)", 12f, TextColor);
         m_TaskContract = Input(tab.transform, "/path/to/contract.json", 24f);
-        Label(tab.transform, "2. Task settings (saved next to the contract as *.train.json)", 12f, TextColor);
-        m_TaskTrain = Input(tab.transform, "(auto) /path/to/contract.train.json", 24f);
+        m_TaskExpert = Column(tab.transform, "TaskExpert");
+        m_TaskExpert.GetComponent<LayoutElement>().flexibleHeight = 0f;
+        Label(m_TaskExpert.transform, "2. Task settings (saved next to the contract as *.train.json)", 12f, TextColor);
+        m_TaskTrain = Input(m_TaskExpert.transform, "(auto) /path/to/contract.train.json", 24f);
+        m_TaskExpert.SetActive(false);
         var row = Row(tab.transform, 26f);
         Btn(row.transform, "Read", ReadTask);
         m_TaskType = Label(row.transform, "type: -", 12f, TextColor);
@@ -539,12 +633,29 @@ public class LabPanel : MonoBehaviour
         Btn(row2.transform, "Save & train", () => { SaveTask(); m_StartAfterSave = true; });
         Btn(row2.transform, "Stop", StopTraining);
         m_TaskStatus = Label(tab.transform, "Pick a contract, Read, adjust, Save & train", 12f, TextColor);
-        m_TaskStatus.enableWordWrapping = true; m_TaskStatus.GetComponent<LayoutElement>().preferredHeight = 60f;
+        m_TaskStatus.enableWordWrapping = true; m_TaskStatus.GetComponent<LayoutElement>().preferredHeight = 22f;
+        m_TaskProgress = Label(tab.transform, "", 12f, TextColor);
+        m_TaskProgress.enableWordWrapping = true; m_TaskProgress.GetComponent<LayoutElement>().preferredHeight = 46f;
+        var img = new GameObject("TaskCurve", typeof(RectTransform), typeof(RawImage), typeof(LayoutElement));
+        img.transform.SetParent(tab.transform, false);
+        img.GetComponent<LayoutElement>().preferredHeight = 64f;
+        m_TaskCurveTex = new Texture2D(400, 64, TextureFormat.RGBA32, false);
+        m_TaskCurve = img.GetComponent<RawImage>(); m_TaskCurve.texture = m_TaskCurveTex;
+        Label(tab.transform, "blue: error per attempt   green: success rate", 10f, TextColor);
         SetBaseTask(false);
         return tab;
     }
 
     bool m_StartAfterSave;
+
+    // 学習の進み具合 (status.json): 成功率・誤差・残り時間・次の一手。Task タブに出す
+    TMP_Text m_TaskProgress;
+    RawImage m_TaskCurve;
+    Texture2D m_TaskCurveTex;
+    ExternalProcess m_StatusProc;
+    float m_StatusNextAt;
+    string m_StatusDir;
+    int m_TaskCurvePoints;
 
     void SetBaseTask(bool isBase)
     {
@@ -614,6 +725,7 @@ public class LabPanel : MonoBehaviour
         string urdf = m_DraftUrdf != null ? m_DraftUrdf.text : "";
         StartTraining(contract, TaskTrainPath(), urdf, "8", outDir);
         if (m_TrainOut != null) m_TrainOut.text = outDir;
+        m_StatusDir = outDir; m_TaskCurvePoints = 0; m_StatusNextAt = 0f;
         SetTaskStatus("training started (progress and curve under 詳細 > Train)");
     }
 
