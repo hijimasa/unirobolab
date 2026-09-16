@@ -52,7 +52,10 @@ from 43 minutes to under 3), robots are spawned through the learning server so n
 graph is needed during training, and several simulator processes can be pooled (about 2x
 on this machine: one process already fills most cores). See
 [docs/unity6-gpu-physics-survey.md](docs/unity6-gpu-physics-survey.md) for why GPU
-physics is not an option inside Unity 6. The GUI is still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
+physics is not an option inside Unity 6. Policies trained elsewhere can be imported: `unirobolab import-isaaclab` builds a contract
+from an Isaac Lab run's `env.yaml` (per-element scale/offset, Twist commands, IMU and
+odometry inputs, cmd_vel outputs are all in the contract now), and sim2sim scenarios can
+inject disturbances and random goals. The GUI is still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
 the design, milestones and results.
 
 ## Layout

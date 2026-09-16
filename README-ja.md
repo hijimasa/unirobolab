@@ -44,7 +44,9 @@ ros2_control 経由(生成器がコントローラ設定も出す)の両方を�
 学習した方策が、姿勢を ground_truth トピックから取る ROS 2 経路の sim2sim に合格している。学習は成功率の移動窓で早期終了し(diffbot は 43 分 → 3 分未満)、ロボットのスポーンも学習サーバ経由で
 ROS 2 なしに行える。複数シミュレータプロセスのプールも使えるが、1 プロセスで大半のコアを使うため
 このマシンでは約 2 倍止まり。Unity 6 に GPU 物理が無い件は
-[docs/unity6-gpu-physics-survey.md](docs/unity6-gpu-physics-survey.md)。GUI はこれから。
+[docs/unity6-gpu-physics-survey.md](docs/unity6-gpu-physics-survey.md)。外部で学習した方策の取り込みは `unirobolab import-isaaclab`(Isaac Lab の `env.yaml` から契約を生成。
+要素ごとの scale/offset、Twist 指令、IMU・オドメトリ入力、cmd_vel 出力を契約で表せる)。
+sim2sim のシナリオは外乱注入とランダム目標に対応。GUI はこれから。
 設計・マイルストーン・結果は [docs/architecture.md](docs/architecture.md) を参照。
 
 ## 構成
