@@ -64,6 +64,15 @@ public class LabPanel : MonoBehaviour
     /// <summary>画面確認用: SIM_GUI_SCREENSHOT=<png> で起動 8 秒後 (SIM_GUI_SCREENSHOT_DELAY 秒後) に画面を保存する。</summary>
     public const string ScreenshotEnvVar = "SIM_GUI_SCREENSHOT";
     float m_ScreenshotAt = -1f;
+    /// <summary>Policy パネルが使う: 専門家層の表示、Task タブの契約と目標範囲、直近の学習出力。</summary>
+    public static bool ExpertShown => s_Instance != null && s_Instance.m_ExpertShown;
+    public static bool JapaneseFont => s_JapaneseFont;
+    public static string TaskContract => s_Instance != null && s_Instance.m_TaskContract != null ? s_Instance.m_TaskContract.text : "";
+    public static string LastRunDir => s_Instance != null ? s_Instance.m_LastRunDir : "";
+    public static float TaskGoalRange => s_Instance != null && s_Instance.m_TaskGoal != null ? s_Instance.m_TaskGoal.value : 1f;
+    public static bool TaskIsBase => s_Instance != null && s_Instance.m_TaskIsBase;
+    static LabPanel s_Instance;
+    string m_LastRunDir = "";
     static bool s_JapaneseFont;   // OS の日本語フォントを TMP のフォールバックに登録できたか
     static bool s_FontProbed;
 
@@ -114,6 +123,7 @@ public class LabPanel : MonoBehaviour
 
     void Start()
     {
+        s_Instance = this;
         m_Control = GetComponent<SimulationControl>();
         if (!Application.isBatchMode) BuildUi();
         string autorun = Environment.GetEnvironmentVariable(TrainAutorunEnvVar);
@@ -140,6 +150,16 @@ public class LabPanel : MonoBehaviour
         {
             float delay = float.TryParse(Environment.GetEnvironmentVariable("SIM_GUI_SCREENSHOT_DELAY"), out float d) ? d : 8f;
             m_ScreenshotAt = Time.realtimeSinceStartup + delay;
+        }
+        string deployRun = Environment.GetEnvironmentVariable(DeployAutorunEnvVar);
+        if (!string.IsNullOrEmpty(deployRun))
+        {
+            string[] p = deployRun.Split('|');
+            if (m_DepNs == null) BuildUi();
+            ShowTab("Deploy");
+            if (p.Length >= 3) m_DepNs.text = p[2];
+            if (p.Length >= 4) SetDepMode(p[3] == "ros2_control_commands");
+            StartDeploy(p[0], p.Length > 1 ? p[1] : null);
         }
         string checkRun = Environment.GetEnvironmentVariable(CheckAutorunEnvVar);
         if (!string.IsNullOrEmpty(checkRun))
@@ -208,6 +228,7 @@ public class LabPanel : MonoBehaviour
         m_Train = Launch(cmd.ToString());
         m_CurvePoints = 0;
         m_StatusDir = outDir; m_TaskCurvePoints = 0; m_StatusNextAt = 0f;
+        m_LastRunDir = outDir;
         SetTrainStatus("training started");
     }
 
@@ -500,6 +521,7 @@ public class LabPanel : MonoBehaviour
             }
         }
         PollTrainStatus();
+        PollDeploy();
         if (m_Train != null)
         {
             last = null;
@@ -549,7 +571,7 @@ public class LabPanel : MonoBehaviour
         return port;
     }
 
-    void OnApplicationQuit() { StopTraining(); m_Check?.Stop(); m_Validate?.Stop(); m_Explain?.Stop(); m_TaskProc?.Stop(); m_StatusProc?.Stop(); }
+    void OnApplicationQuit() { StopTraining(); m_Check?.Stop(); m_Validate?.Stop(); m_Explain?.Stop(); m_TaskProc?.Stop(); m_StatusProc?.Stop(); m_DepProc?.Stop(); }
 
     // ======================================================================= ui
     void BuildUi()
@@ -575,6 +597,7 @@ public class LabPanel : MonoBehaviour
         var tabRow = Row(rt, 28f);
         Btn(tabRow.transform, "Task", () => ShowTab("Task"));
         Btn(tabRow.transform, "Check", () => ShowTab("Check"));
+        Btn(tabRow.transform, "Deploy", () => ShowTab("Deploy"));
         foreach (string name in new[] { "Contract", "Train" })
         {
             string n = name;
@@ -587,6 +610,7 @@ public class LabPanel : MonoBehaviour
         m_Tabs["Contract"] = BuildContractTab(rt);
         m_Tabs["Train"] = BuildTrainTab(rt);
         m_Tabs["Check"] = BuildCheckTab(rt);
+        m_Tabs["Deploy"] = BuildDeployTab(rt);
         ShowTab("Task");
     }
 
@@ -602,7 +626,139 @@ public class LabPanel : MonoBehaviour
         foreach (GameObject b in m_ExpertTabButtons) b.SetActive(m_ExpertShown);
         if (m_CheckExpert != null) m_CheckExpert.SetActive(m_ExpertShown);
         if (m_TaskExpert != null) m_TaskExpert.SetActive(m_ExpertShown);
-        if (!m_ExpertShown && !m_Tabs["Check"].activeSelf) ShowTab("Task");
+        if (!m_ExpertShown && !m_Tabs["Check"].activeSelf && !m_Tabs["Deploy"].activeSelf) ShowTab("Task");
+    }
+
+    // =================================================================== Deploy
+    TMP_InputField m_DepNs, m_DepController, m_DepEstop, m_DepOut;
+    TMP_Text m_DepMode, m_DepGuide, m_DepStatus;
+    bool m_DepRos2Control;
+    ExternalProcess m_DepProc;
+    int m_DepStep;            // 0 idle, 1 ros-set, 2 gen, 3 guide
+    string m_DepPkgDir;
+    public const string DeployAutorunEnvVar = "SIM_DEPLOY_AUTORUN";   // "契約|出力ディレクトリ" でヘッドレス確認
+
+    /// <summary>実機へ: 接続先のフォーム → ROS 2 パッケージ生成 → 手順書。JSON の編集は ros-set に任せる。</summary>
+    static TMP_Text FormLabel(Transform row, string text)
+    {
+        TMP_Text l = Label(row, text, 12f, TextColor);
+        var le = l.GetComponent<LayoutElement>(); le.preferredWidth = 96f; le.flexibleWidth = 0f;
+        return l;
+    }
+
+    GameObject BuildDeployTab(RectTransform parent)
+    {
+        GameObject tab = Column(parent, "DeployTab");
+        Label(tab.transform, "Real robot: where to connect (contract from the Task tab)", 12f, TextColor);
+        var r1 = Row(tab.transform, 26f);
+        FormLabel(r1.transform, "namespace"); m_DepNs = Input(r1.transform, "robot", 24f);
+        var r2 = Row(tab.transform, 26f);
+        m_DepMode = Label(r2.transform, "command: joint_states topic", 12f, TextColor);
+        Btn(r2.transform, "switch", () => SetDepMode(!m_DepRos2Control));
+        var r3 = Row(tab.transform, 26f);
+        FormLabel(r3.transform, "controller"); m_DepController = Input(r3.transform, "(ros2_control) joint_group_position_controller", 24f);
+        var r4 = Row(tab.transform, 26f);
+        FormLabel(r4.transform, "e-stop topic"); m_DepEstop = Input(r4.transform, "(auto) /<namespace>/estop", 24f);
+        var r5 = Row(tab.transform, 26f);
+        FormLabel(r5.transform, "package dir"); m_DepOut = Input(r5.transform, "(auto) <contract dir>/deploy", 24f);
+        var r6 = Row(tab.transform, 28f);
+        Btn(r6.transform, "Make ROS 2 package", () => StartDeploy(null, null));
+        Btn(r6.transform, "Show guide", ShowGuideOnly);
+        m_DepGuide = Label(tab.transform, "", 11f, TextColor);
+        m_DepGuide.enableWordWrapping = true; m_DepGuide.GetComponent<LayoutElement>().preferredHeight = 150f;
+        m_DepGuide.alignment = TextAlignmentOptions.TopLeft; m_DepGuide.overflowMode = TextOverflowModes.Truncate;
+        m_DepStatus = Label(tab.transform, "fill in the namespace, then Make ROS 2 package", 12f, TextColor);
+        m_DepStatus.enableWordWrapping = true; m_DepStatus.GetComponent<LayoutElement>().preferredHeight = 34f;
+        SetDepMode(false);
+        return tab;
+    }
+
+    void SetDepMode(bool ros2Control)
+    {
+        m_DepRos2Control = ros2Control;
+        m_DepMode.text = ros2Control ? "command: ros2_control controller" : "command: joint_states topic";
+        m_DepController.interactable = ros2Control;
+    }
+
+    string DepContract() => TaskContract;
+
+    string DepOutDir()
+    {
+        if (!string.IsNullOrEmpty(m_DepOut.text)) return m_DepOut.text;
+        string c = DepContract();
+        return Path.Combine(Path.GetDirectoryName(c) ?? ".", "deploy");
+    }
+
+    /// <summary>ros-set → gen → deploy-guide を順に走らせる。contract/outDir を渡すと autorun。</summary>
+    void StartDeploy(string contract, string outDir)
+    {
+        if (!string.IsNullOrEmpty(contract)) { if (m_TaskContract != null) m_TaskContract.text = contract; if (m_DepOut != null) m_DepOut.text = outDir; }
+        string c = DepContract();
+        if (string.IsNullOrEmpty(c)) { SetDepStatus("pick a contract in the Task tab first"); return; }
+        if (m_DepProc != null && !m_DepProc.HasExited) { SetDepStatus("busy"); return; }
+        var cmd = new StringBuilder();
+        cmd.Append(ExternalProcess.UnirobolabPython()).Append(" -m unirobolab ros-set ").Append(ExternalProcess.Quote(c));
+        if (!string.IsNullOrEmpty(m_DepNs.text)) cmd.Append(" --namespace ").Append(ExternalProcess.Quote(m_DepNs.text));
+        cmd.Append(" --command-mode ").Append(m_DepRos2Control ? "ros2_control_commands" : "joint_state_topic");
+        if (m_DepRos2Control && !string.IsNullOrEmpty(m_DepController.text)) cmd.Append(" --controller ").Append(ExternalProcess.Quote(m_DepController.text));
+        if (!string.IsNullOrEmpty(m_DepEstop.text)) cmd.Append(" --estop-topic ").Append(ExternalProcess.Quote(m_DepEstop.text));
+        cmd.Append(" 2>&1");
+        m_DepStep = 1;
+        m_DepProc = Launch(cmd.ToString());
+        SetDepStatus("1/3 writing the connection settings into the contract...");
+    }
+
+    void ShowGuideOnly()
+    {
+        string c = DepContract();
+        if (string.IsNullOrEmpty(c)) { SetDepStatus("pick a contract in the Task tab first"); return; }
+        if (m_DepProc != null && !m_DepProc.HasExited) { SetDepStatus("busy"); return; }
+        m_DepStep = 3;
+        m_DepProc = Launch($"{ExternalProcess.UnirobolabPython()} -m unirobolab deploy-guide {ExternalProcess.Quote(c)} --lang {(s_JapaneseFont ? "ja" : "en")} --summary 2>&1");
+    }
+
+    void PollDeploy()
+    {
+        if (m_DepProc == null || !m_DepProc.HasExited) return;
+        m_DepProc.WaitForExit();
+        var sb = new StringBuilder();
+        while (m_DepProc.TryDequeue(out string l)) sb.AppendLine(l);
+        string text = sb.ToString().Trim();
+        bool ok = m_DepProc.ExitCode == 0;
+        m_DepProc = null;
+        string c = DepContract();
+        if (!ok) { SetDepStatus("failed: " + text); m_DepStep = 0; return; }
+        if (m_DepStep == 1)
+        {
+            m_DepStep = 2;
+            m_DepProc = Launch($"{ExternalProcess.UnirobolabPython()} -m unirobolab gen {ExternalProcess.Quote(c)} --out {ExternalProcess.Quote(DepOutDir())} --overwrite 2>&1");
+            SetDepStatus("2/3 generating the ROS 2 package...");
+        }
+        else if (m_DepStep == 2)
+        {
+            // "generated <dir>" → 手順書を DEPLOY.md としてパッケージに置き、画面にも出す
+            m_DepPkgDir = text.StartsWith("generated ") ? text.Substring(10).Trim() : DepOutDir();
+            string pkg = Path.GetFileName(m_DepPkgDir.TrimEnd('/'));
+            m_DepStep = 3;
+            string py = ExternalProcess.UnirobolabPython(), lang = s_JapaneseFont ? "ja" : "en";
+            m_DepProc = Launch($"{py} -m unirobolab deploy-guide {ExternalProcess.Quote(c)} --package {ExternalProcess.Quote(pkg)} --lang {lang} --out {ExternalProcess.Quote(Path.Combine(m_DepPkgDir, "DEPLOY.md"))} 2>&1 && {py} -m unirobolab deploy-guide {ExternalProcess.Quote(c)} --package {ExternalProcess.Quote(pkg)} --lang {lang} --summary 2>&1");
+            SetDepStatus("3/3 writing the guide...");
+        }
+        else
+        {
+            m_DepStep = 0;
+            string guide = text.StartsWith("wrote ") ? text.Substring(text.IndexOf('\n') + 1) : text;
+            if (m_DepGuide != null) m_DepGuide.text = guide;
+            SetDepStatus(string.IsNullOrEmpty(m_DepPkgDir) ? "guide shown" : "package ready: " + m_DepPkgDir + " (DEPLOY.md inside)");
+            if (Application.isBatchMode) foreach (string l in guide.Split('\n')) Debug.Log("[LabPanel/deploy] " + l);
+            m_DepPkgDir = null;
+        }
+    }
+
+    void SetDepStatus(string s)
+    {
+        if (m_DepStatus != null) m_DepStatus.text = s;
+        if (Application.isBatchMode) Debug.Log("[LabPanel/deploy] " + s);
     }
 
     // ===================================================================== Task
@@ -640,6 +796,7 @@ public class LabPanel : MonoBehaviour
         img.transform.SetParent(tab.transform, false);
         img.GetComponent<LayoutElement>().preferredHeight = 64f;
         m_TaskCurveTex = new Texture2D(400, 64, TextureFormat.RGBA32, false);
+        { var bg = new Color32[400 * 64]; for (int i = 0; i < bg.Length; i++) bg[i] = new Color32(20, 20, 24, 255); m_TaskCurveTex.SetPixels32(bg); m_TaskCurveTex.Apply(); }
         m_TaskCurve = img.GetComponent<RawImage>(); m_TaskCurve.texture = m_TaskCurveTex;
         Label(tab.transform, "blue: error per attempt   green: success rate", 10f, TextColor);
         SetBaseTask(false);

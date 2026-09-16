@@ -772,4 +772,7 @@ BuildLinuxPlayer で作ったプレイヤーを使っていた。これは「汎
   gen と同じ既定名)。`unirobolab deploy-guide <契約> [--package] [--lang] [--out]` が手順書
   (Markdown) を作る。タブは ros-set → gen --overwrite → deploy-guide --out <pkg>/DEPLOY.md の順に
   走らせ、`SIM_DEPLOY_AUTORUN="契約|出力|名前空間|指令方式"` でヘッドレスに通せる。
+  パネルには `deploy-guide --summary` の要約 (接続先、非常停止、上限、鮮度/立ち上がり/停止時、起動、
+  全文の場所) だけを出し、全文は DEPLOY.md に置く。画面: docs/images/gui_deploy_tab.png、
+  gui_try_policy.png (diffbot のマーカと軌跡)、gui_try_joints.png (servo の関節スライダ)。
 - テスト: python/tests/test_deploy.py (ros-set の編集と既定、手順書の内容: トピック、上限、起動)。
