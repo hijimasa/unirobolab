@@ -108,6 +108,60 @@ def cmd_draft(a) -> int:
     return 0
 
 
+def cmd_task_set(a) -> int:
+    """Update the light-user fields of a task/train config in physical units."""
+    import json as _json
+    c = _load(a.contract, a.schema)
+    with open(a.train, encoding="utf-8") as f:
+        d = _json.load(f)
+    task = d.setdefault("task", {})
+    ttype = task.get("type", "joint_target")
+    if a.time is not None:
+        task["episode_steps"] = max(1, int(round(a.time * c.policy_rate_hz)))
+    train = d.setdefault("train", {})
+    es = train.setdefault("early_stop", {})
+    if ttype == "joint_target":
+        if a.goal_range is not None:
+            task["goal_range"] = [-abs(a.goal_range), abs(a.goal_range)]
+        if a.tolerance is not None:
+            es.update({"metric": "final_abs_err", "threshold": a.tolerance})
+            es.setdefault("window", 200); es.setdefault("min_timesteps", 50000)
+    else:
+        if a.goal_min is not None or a.goal_max is not None:
+            lo, hi = task.get("goal_radius", [1.0, 2.5])
+            task["goal_radius"] = [a.goal_min if a.goal_min is not None else lo, a.goal_max if a.goal_max is not None else hi]
+        if a.tolerance is not None:
+            task["reach_radius"] = a.tolerance
+            es.update({"metric": "success_rate", "threshold": es.get("threshold", 0.9)})
+            es.setdefault("window", 200); es.setdefault("min_timesteps", 40000)
+    with open(a.train, "w", encoding="utf-8") as f:
+        _json.dump(d, f, indent=2, ensure_ascii=False); f.write("\n")
+    print(f"updated {a.train}: type={ttype} episode_steps={task.get('episode_steps')} "
+          + (f"goal_range={task.get('goal_range')}" if ttype == "joint_target" else f"goal_radius={task.get('goal_radius')} reach_radius={task.get('reach_radius')}")
+          + f" early_stop={es}")
+    return 0
+
+
+def cmd_task_show(a) -> int:
+    """Print the light-user fields of a task config (for the GUI to read back)."""
+    import json as _json
+    c = _load(a.contract, a.schema)
+    with open(a.train, encoding="utf-8") as f:
+        d = _json.load(f)
+    task = d.get("task", {}); es = d.get("train", {}).get("early_stop", {})
+    ttype = task.get("type", "joint_target")
+    steps = task.get("episode_steps", 100)
+    out = {"type": ttype, "time_s": round(steps / c.policy_rate_hz, 2), "rate_hz": c.policy_rate_hz}
+    if ttype == "joint_target":
+        gr = task.get("goal_range", [-0.5, 0.5]); out["goal_range"] = max(abs(gr[0]), abs(gr[1]))
+        out["tolerance"] = es.get("threshold", 0.05)
+    else:
+        out["goal_min"], out["goal_max"] = task.get("goal_radius", [1.0, 2.5])
+        out["tolerance"] = task.get("reach_radius", 0.15)
+    print(_json.dumps(out))
+    return 0
+
+
 def cmd_live(a) -> int:
     from unirobolab.direct import live
     c = _load(a.contract, a.schema)
@@ -179,6 +233,21 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--name"); s.add_argument("--namespace", help="ROS namespace (default: from the ros2_control topics)")
     s.add_argument("--onnx", help="policy path to record in the contract")
     s.set_defaults(fn=cmd_draft)
+
+    s = sub.add_parser("task-set", help="set the light-user fields of a task config (goal range, tolerance, time)")
+    add_contract(s)
+    s.add_argument("--train", required=True, help="task/train JSON to update")
+    s.add_argument("--goal-range", type=float, help="joint targets: +- range [rad]")
+    s.add_argument("--goal-min", type=float, help="base targets: nearest goal distance [m]")
+    s.add_argument("--goal-max", type=float, help="base targets: farthest goal distance [m]")
+    s.add_argument("--tolerance", type=float, help="success tolerance [rad or m]")
+    s.add_argument("--time", type=float, help="time limit per attempt [s]")
+    s.set_defaults(fn=cmd_task_set)
+
+    s = sub.add_parser("task-show", help="print the light-user fields of a task config as JSON")
+    add_contract(s)
+    s.add_argument("--train", required=True)
+    s.set_defaults(fn=cmd_task_show)
 
     s = sub.add_parser("live", help="run a policy in real time through the simulator's learning server (no ROS)")
     add_contract(s)
