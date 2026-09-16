@@ -46,3 +46,11 @@ def test_summary_is_short_and_names_topics():
     raw = json.load(open(EX / "diffbot_rl.json"))
     text = deploy_summary(raw, lang="ja")
     assert len(text.splitlines()) <= 8 and "/diffbot/joint_states" in text and "/diffbot/estop" in text and "ros2 launch" in text
+
+
+def test_package_name_is_ros_safe():
+    from unirobolab.generator import ros_package_name
+    assert ros_package_name("ServoDemo_draft_policy") == "servodemo_draft_policy"
+    assert ros_package_name("2 bots-policy") == "p_2_bots_policy"
+    raw = json.load(open(EX / "servo_demo_rl.json")); raw["name"] = "ServoDemo_draft"
+    assert "servodemo_draft_policy" in deploy_summary(raw, lang="en")

@@ -23,9 +23,19 @@ def _write(path: str, text: str, executable: bool = False) -> None:
         os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def ros_package_name(name: str) -> str:
+    """ROS 2 のパッケージ名規則 (小文字・数字・アンダースコア、先頭は英字) に丸める。"""
+    import re
+    n = re.sub(r"[^a-z0-9_]", "_", name.lower()).strip("_")
+    n = re.sub(r"_+", "_", n)
+    if not n or not n[0].isalpha():
+        n = "p_" + n
+    return n
+
+
 def generate(c: Contract, out_dir: str, package_name: str | None = None,
              onnx_path: str | None = None, overwrite: bool = False) -> str:
-    pkg = package_name or f"{c.name}_policy"
+    pkg = ros_package_name(package_name or f"{c.name}_policy")
     if not pkg.isidentifier():
         raise ValueError(f"package name {pkg!r} is not a valid identifier")
     root = os.path.join(out_dir, pkg)

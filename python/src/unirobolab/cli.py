@@ -202,6 +202,10 @@ def cmd_task_show(a) -> int:
     ttype = task.get("type", "joint_target")
     steps = task.get("episode_steps", 100)
     out = {"type": ttype, "time_s": round(steps / c.policy_rate_hz, 2), "rate_hz": c.policy_rate_hz}
+    # 学習結果の置き場所: 契約が宣言する policy.onnx (契約ファイルからの相対) — GUI はこの隣に出力する
+    onnx = c.raw.get("policy", {}).get("onnx")
+    if onnx:
+        out["onnx"] = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(a.contract)), onnx))
     if ttype == "joint_target":
         gr = task.get("goal_range", [-0.5, 0.5]); out["goal_range"] = max(abs(gr[0]), abs(gr[1]))
         out["tolerance"] = es.get("threshold", 0.05)

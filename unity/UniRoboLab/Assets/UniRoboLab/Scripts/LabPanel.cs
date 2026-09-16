@@ -50,6 +50,7 @@ public class LabPanel : MonoBehaviour
     Slider m_TaskGoal, m_TaskGoalMax, m_TaskTol, m_TaskTime;
     GameObject m_TaskGoalMaxRow, m_TaskExpert;
     bool m_TaskIsBase;
+    string m_TaskOnnxDir;             // 契約が宣言する policy.onnx の置き場所 (task-show の onnx)。学習の出力先
     ExternalProcess m_TaskProc;
     bool m_TaskReadPending;
     readonly List<GameObject> m_ExpertTabButtons = new List<GameObject>();
@@ -63,7 +64,7 @@ public class LabPanel : MonoBehaviour
     public const string CheckAutorunEnvVar = "SIM_CHECK_AUTORUN";
     /// <summary>画面確認用: SIM_GUI_SCREENSHOT=<png> で起動 8 秒後 (SIM_GUI_SCREENSHOT_DELAY 秒後) に画面を保存する。</summary>
     public const string ScreenshotEnvVar = "SIM_GUI_SCREENSHOT";
-    float m_ScreenshotAt = -1f;
+    readonly List<(string path, float at)> m_Shots = new List<(string, float)>();   // "a.png@10,b.png@120" も可
     /// <summary>Policy パネルが使う: 専門家層の表示、Task タブの契約と目標範囲、直近の学習出力。</summary>
     public static bool ExpertShown => s_Instance != null && s_Instance.m_ExpertShown;
     public static bool JapaneseFont => s_JapaneseFont;
@@ -133,6 +134,23 @@ public class LabPanel : MonoBehaviour
             if (p.Length >= 5) { m_AutorunOut = p[4]; StartTraining(p[0], p[1], p[2], p[3], p[4]); }
             else Debug.LogError($"[LabPanel] {TrainAutorunEnvVar} は '契約|学習設定|URDF|体数|出力' の形");
         }
+        string tabEnv = Environment.GetEnvironmentVariable("SIM_GUI_TAB");   // 画面確認用: 起動時に開くタブ
+        if (!string.IsNullOrEmpty(tabEnv) && m_Tabs.ContainsKey(tabEnv))
+        {
+            if (m_ExpertTabButtons.Count > 0 && (tabEnv == "Contract" || tabEnv == "Train") && !m_ExpertShown) ToggleExpert();
+            ShowTab(tabEnv);
+        }
+        string draftRun = Environment.GetEnvironmentVariable("SIM_DRAFT_AUTORUN");   // "URDF|契約の出力先"
+        if (!string.IsNullOrEmpty(draftRun))
+        {
+            string[] p = draftRun.Split('|');
+            if (m_DraftUrdf == null) BuildUi();
+            if (!m_ExpertShown) ToggleExpert();
+            ShowTab("Contract");
+            m_DraftUrdf.text = p[0];
+            if (p.Length > 1) m_ContractPath.text = p[1];
+            DraftContract();
+        }
         string taskRun = Environment.GetEnvironmentVariable(TaskAutorunEnvVar);
         if (!string.IsNullOrEmpty(taskRun))
         {
@@ -141,15 +159,22 @@ public class LabPanel : MonoBehaviour
             {
                 if (m_TaskContract == null) BuildUi();          // batchmode でも UI を組んで同じ経路を通す
                 m_TaskContract.text = p[0]; m_TaskTrain.text = p[1]; m_DraftUrdf.text = p[2];
-                m_TaskAutorun = true;
+                m_TaskAutorun = !(p.Length > 3 && p[3] == "read");   // 4 つ目が read なら読むだけ (画面確認用)
                 ReadTask();
             }
             else Debug.LogError($"[LabPanel] {TaskAutorunEnvVar} は '契約|学習設定|URDF' の形");
         }
-        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(ScreenshotEnvVar)))
+        string shots = Environment.GetEnvironmentVariable(ScreenshotEnvVar);
+        if (!string.IsNullOrEmpty(shots))
         {
             float delay = float.TryParse(Environment.GetEnvironmentVariable("SIM_GUI_SCREENSHOT_DELAY"), out float d) ? d : 8f;
-            m_ScreenshotAt = Time.realtimeSinceStartup + delay;
+            foreach (string item in shots.Split(','))
+            {
+                int at = item.LastIndexOf('@');
+                if (at > 0 && item.Substring(at + 1) == "done") m_Shots.Add((item.Substring(0, at), float.PositiveInfinity));   // 学習完了の 3 秒後
+                else if (at > 0 && float.TryParse(item.Substring(at + 1), out float t)) m_Shots.Add((item.Substring(0, at), Time.realtimeSinceStartup + t));
+                else m_Shots.Add((item, Time.realtimeSinceStartup + delay));
+            }
         }
         string deployRun = Environment.GetEnvironmentVariable(DeployAutorunEnvVar);
         if (!string.IsNullOrEmpty(deployRun))
@@ -267,7 +292,11 @@ public class LabPanel : MonoBehaviour
             {
                 if (m_TaskProgress != null) m_TaskProgress.text = text;
                 if (Application.isBatchMode) Debug.Log("[LabPanel/status] " + text.Replace('\n', ' '));
-                if (text.StartsWith("学習が終わりました") || text.StartsWith("training finished")) m_StatusDir = null;
+                if (text.StartsWith("学習が終わりました") || text.StartsWith("training finished"))
+                {
+                    m_StatusDir = null;
+                    for (int i = 0; i < m_Shots.Count; i++) if (float.IsPositiveInfinity(m_Shots[i].at)) m_Shots[i] = (m_Shots[i].path, Time.realtimeSinceStartup + 3f);
+                }
             }
             RedrawTaskCurve();
             return;
@@ -478,7 +507,13 @@ public class LabPanel : MonoBehaviour
                 SetContractStatus("invalid (exit " + m_Validate.ExitCode + "): " + m_ContractStatus.text);
             if (m_Validate.HasExited)
             {
-                if (m_LoadAfterValidate && m_Validate.ExitCode == 0) LoadContract();
+                if (m_LoadAfterValidate && m_Validate.ExitCode == 0)
+                {
+                    LoadContract();
+                    // 草案ができたら Task タブの契約欄にも入れる (次の一歩をすぐ踏めるように)
+                    if (m_TaskContract != null && string.IsNullOrEmpty(m_TaskContract.text)) { m_TaskContract.text = m_ContractPath.text; m_TaskTrain.text = ""; }
+                    SetContractStatus("drafted " + m_ContractPath.text + " (+ .train.json). Next: Task tab");
+                }
                 m_LoadAfterValidate = false;
                 m_Validate = null;
             }
@@ -541,12 +576,12 @@ public class LabPanel : MonoBehaviour
             if (last != null) SetCheckStatus(last);
             if (m_Check.HasExited) { LoadReport(m_ReportPath.text); m_Check = null; }
         }
-        if (m_ScreenshotAt > 0f && Time.realtimeSinceStartup >= m_ScreenshotAt)
+        for (int i = m_Shots.Count - 1; i >= 0; i--)
         {
-            m_ScreenshotAt = -1f;
-            string png = Environment.GetEnvironmentVariable(ScreenshotEnvVar);
-            ScreenCapture.CaptureScreenshot(png);
-            Debug.Log("[LabPanel] screenshot -> " + png);
+            if (Time.realtimeSinceStartup < m_Shots[i].at) continue;
+            ScreenCapture.CaptureScreenshot(m_Shots[i].path);
+            Debug.Log("[LabPanel] screenshot -> " + m_Shots[i].path);
+            m_Shots.RemoveAt(i);
         }
         if (m_Explain != null && m_Explain.HasExited)
         {
@@ -853,6 +888,13 @@ public class LabPanel : MonoBehaviour
         }
         bool isBase = json.Contains("base_target");
         SetBaseTask(isBase);
+        int oi = json.IndexOf("\"onnx\"", StringComparison.Ordinal);
+        m_TaskOnnxDir = null;
+        if (oi >= 0)
+        {
+            int q1 = json.IndexOf('"', json.IndexOf(':', oi)); int q2 = q1 >= 0 ? json.IndexOf('"', q1 + 1) : -1;
+            if (q1 >= 0 && q2 > q1) m_TaskOnnxDir = Path.GetDirectoryName(json.Substring(q1 + 1, q2 - q1 - 1));
+        }
         if (isBase) { m_TaskGoal.value = Num("goal_min", 1f); m_TaskGoalMax.value = Num("goal_max", 2.5f); }
         else m_TaskGoal.value = Num("goal_range", 0.5f);
         m_TaskTol.value = Num("tolerance", isBase ? 0.15f : 0.05f);
@@ -878,7 +920,9 @@ public class LabPanel : MonoBehaviour
     void StartTrainingFromTask()
     {
         string contract = m_TaskContract.text;
-        string outDir = Path.Combine(Path.GetDirectoryName(contract) ?? ".", "runs", Path.GetFileNameWithoutExtension(contract));
+        // 契約が policy.onnx の場所を宣言していればそこへ (gen / sim2sim / Try がそのまま見つけられる)
+        string outDir = !string.IsNullOrEmpty(m_TaskOnnxDir) ? m_TaskOnnxDir
+            : Path.Combine(Path.GetDirectoryName(contract) ?? ".", "runs", Path.GetFileNameWithoutExtension(contract));
         string urdf = m_DraftUrdf != null ? m_DraftUrdf.text : "";
         StartTraining(contract, TaskTrainPath(), urdf, "8", outDir);
         if (m_TrainOut != null) m_TrainOut.text = outDir;
@@ -896,7 +940,7 @@ public class LabPanel : MonoBehaviour
     {
         GameObject go = DefaultControls.CreateSlider(new DefaultControls.Resources());
         go.transform.SetParent(parent, false);
-        var le = go.AddComponent<LayoutElement>(); le.preferredHeight = 20f;
+        var le = go.AddComponent<LayoutElement>(); le.layoutPriority = 2; le.flexibleHeight = 0f; le.preferredHeight = 20f;
         var sl = go.GetComponent<Slider>();
         sl.minValue = min; sl.maxValue = max; sl.value = value;
         sl.onValueChanged.AddListener(onChange);
@@ -1006,7 +1050,7 @@ public class LabPanel : MonoBehaviour
     {
         GameObject go = TMP_DefaultControls.CreateInputField(new TMP_DefaultControls.Resources());
         go.transform.SetParent(parent, false);
-        var le = go.AddComponent<LayoutElement>(); le.preferredHeight = height;
+        var le = go.AddComponent<LayoutElement>(); le.layoutPriority = 2; le.flexibleHeight = 0f; le.preferredHeight = height;
         var field = go.GetComponent<TMP_InputField>();
         field.pointSize = 12f;
         if (field.placeholder is TMP_Text ph) { ph.text = placeholder; ph.fontSize = 12f; }

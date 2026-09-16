@@ -81,8 +81,9 @@ def _topics(raw: dict[str, Any]) -> dict[str, str]:
 
 def deploy_guide(raw: dict[str, Any], package: str | None = None, lang: str = "ja") -> str:
     ja = lang != "en"
+    from .generator import ros_package_name
     name = raw.get("name", "policy")
-    pkg = package or f"{name}_policy"
+    pkg = ros_package_name(package or f"{name}_policy")
     ros = raw.get("ros", {})
     ns = ros.get("namespace", "robot")
     joints = [j["name"] if isinstance(j, dict) else j for j in raw.get("robot", {}).get("joints", [])]
@@ -178,8 +179,9 @@ def deploy_guide(raw: dict[str, Any], package: str | None = None, lang: str = "j
 def deploy_summary(raw: dict[str, Any], package: str | None = None, lang: str = "ja") -> str:
     """パネルに収まる要約 (10 行程度)。全文は deploy_guide (DEPLOY.md)。"""
     ja = lang != "en"
+    from .generator import ros_package_name
     name = raw.get("name", "policy")
-    pkg = package or f"{name}_policy"
+    pkg = ros_package_name(package or f"{name}_policy")
     ns = raw.get("ros", {}).get("namespace", "robot")
     t = _topics(raw)
     safety = raw.get("safety", {})

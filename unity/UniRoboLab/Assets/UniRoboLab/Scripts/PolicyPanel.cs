@@ -56,6 +56,7 @@ public class PolicyPanel : MonoBehaviour
     readonly List<Slider> m_JointSliders = new List<Slider>();
     float m_SliderSendAt = -1f;
     bool m_Running;
+    float m_SavedTimeScale = -1f;     // 試す間は実時間 (time_scale 設定は学習向けなので一時的に 1 へ)
     int m_GoalSize = -1;
     int m_IsBase = -1;                // -1 不明, 0 関節, 1 地点 (ライブ実行器の状態行 "base" から)
     bool IsBase => m_IsBase >= 0 ? m_IsBase == 1 : LabPanel.TaskIsBase;
@@ -200,6 +201,7 @@ public class PolicyPanel : MonoBehaviour
             SetStatus("started: " + args);
             Debug.Log("[PolicyPanel] started: " + args);
             m_Running = true;
+            if (m_SavedTimeScale < 0f) { m_SavedTimeScale = SimulationControl.ConfiguredTimeScale; SimulationControl.ConfiguredTimeScale = 1f; if (Time.timeScale > 1f) Time.timeScale = 1f; }
             if (m_Plain != null) m_Plain.text = LabPanel.JapaneseFont ? "動かしています..." : "running...";
         }
         catch (Exception e)
@@ -237,7 +239,15 @@ public class PolicyPanel : MonoBehaviour
         catch (Exception) { }
         m_Process = null;
         m_Running = false;
+        RestoreTimeScale();
         SetStatus("stopped");
+    }
+
+    void RestoreTimeScale()
+    {
+        if (m_SavedTimeScale < 0f) return;
+        SimulationControl.ConfiguredTimeScale = m_SavedTimeScale;
+        m_SavedTimeScale = -1f;
     }
 
     void OnApplicationQuit() { StopRunner(); }
@@ -429,6 +439,8 @@ public class PolicyPanel : MonoBehaviour
         {
             SetStatus("exited (" + m_Process.ExitCode + "): " + m_LastStatus);
             m_Process = null;
+            m_Running = false;
+            RestoreTimeScale();
         }
         if (m_Entity != null && Time.unscaledTime > m_NextEntityRefresh && string.IsNullOrEmpty(m_Entity.text))
         {
@@ -506,7 +518,7 @@ public class PolicyPanel : MonoBehaviour
     {
         GameObject go = TMP_DefaultControls.CreateInputField(new TMP_DefaultControls.Resources());
         go.transform.SetParent(parent, false);
-        var le = go.AddComponent<LayoutElement>(); le.preferredHeight = 26f;
+        var le = go.AddComponent<LayoutElement>(); le.layoutPriority = 2; le.flexibleHeight = 0f; le.preferredHeight = 26f;
         var field = go.GetComponent<TMP_InputField>();
         field.pointSize = 12f;
         if (field.placeholder is TMP_Text ph) { ph.text = placeholder; ph.fontSize = 12f; }
