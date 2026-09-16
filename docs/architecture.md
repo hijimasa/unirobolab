@@ -374,3 +374,26 @@ ROS 2 経路(生成パッケージ + トピック)で配備しても通る、が
   `set_sim_state pause` を ROS で先に呼ぶ。学習環境は "unknown op" を検出して警告する)
 - ステップ中に複数物理ステップを 1 フレームで回すモード(FixedUpdate 依存コンポーネントとの整合が課題)
 - GUI、uv 同梱配布、M3(ros2_control_commands)
+
+## 10. M3 の第一段階: ros2_control 経由の配備を sim2sim で通す(2026-09-16)
+
+実機は ros2_control で動かすのが普通なので、生成ノードの `command_mode=ros2_control_commands`
+(コントローラの `/commands` に `Float64MultiArray`)を servo_demo で検証した。
+
+- 契約 `contract/examples/servo_demo_rl_ros2control.json`: `ros.command_mode` と
+  `ros.controller_name` 以外は `servo_demo_rl.json` と同じ。方策は直結学習のもの。
+- `gen` はこのモードのとき `config/controllers.yaml` も出す(joint_state_broadcaster と、
+  行動項の `ros2_control_interface` 型のコントローラ。関節順は行動項と同じ)。
+  ノードが出す配列の順とコントローラの関節順が同じ生成元から出るので、ここでずれない。
+- `scripts/ros2_control_servo_demo.launch.py`: robot_state_publisher + ros2_control_node
+  (topic_based_ros2_control → Unity の `/ServoDemo/joint_command`)+ spawner。
+  サンプルの launch から JTC と commander を外したもの。
+
+結果(sim2sim、25 Hz、直結学習の方策): **PASS**。ideal_joint 3〜6 mrad、cheap_joint 11〜37 mrad。
+経路は ノード → `/ServoDemo/joint_group_position_controller/commands` → controller_manager(100 Hz)
+→ topic_based → `/ServoDemo/joint_command` → Unity。観測の `/ServoDemo/joint_states` は Unity(30 Hz)と
+joint_state_broadcaster(100 Hz)の両方が同じ名前で出すので、ノードは両方を受ける
+(実機では broadcaster だけになる)。鮮度は最悪 7 ms。
+
+これで契約からの 3 経路(直結学習、トピック配備、ros2_control 配備)が同じ方策で通った。
+M3 の残りは実機 1 構成での実行と、ros2_control の状態を観測に使う場合の話(effort など)。

@@ -1,0 +1,66 @@
+{
+  "contract_version": 0,
+  "name": "servo_demo_rl_ros2control",
+  "robot": {
+    "urdf": "servo_demo_description/robots/servo_demo.urdf.xacro",
+    "joints": [
+      "ideal_joint",
+      "cheap_joint"
+    ]
+  },
+  "control": {
+    "policy_rate_hz": 25,
+    "sim_dt_s": 0.02,
+    "action_latency_steps": 0
+  },
+  "observations": [
+    {
+      "name": "q",
+      "source": "joint_position",
+      "unit": "rad",
+      "scale": 1.0
+    },
+    {
+      "name": "qd",
+      "source": "joint_velocity",
+      "unit": "rad/s",
+      "scale": 0.1,
+      "deadband": 0.02
+    },
+    {
+      "name": "goal",
+      "source": "command",
+      "unit": "rad",
+      "size": 2
+    },
+    {
+      "name": "prev_a",
+      "source": "last_action"
+    }
+  ],
+  "actions": [
+    {
+      "name": "q_target",
+      "target": "joints",
+      "mode": "position",
+      "unit": "rad",
+      "scale": 1.0,
+      "clip": [
+        -1.0,
+        1.0
+      ],
+      "ros2_control_interface": "position_controllers/JointGroupPositionController"
+    }
+  ],
+  "policy": {
+    "onnx": "../../generated/runs/servo_demo_rl/policy.onnx",
+    "input_name": "obs",
+    "output_name": "actions",
+    "history_length": 1
+  },
+  "ros": {
+    "namespace": "ServoDemo",
+    "command_mode": "ros2_control_commands",
+    "controller_name": "joint_group_position_controller"
+  }
+}

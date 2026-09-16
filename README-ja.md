@@ -39,8 +39,8 @@ scripts/sim2sim_container.sh build          # 派生イメージ: onnxruntime, t
 M1 完了、M2 の第一段階完了: シミュレータ内で PPO 学習したポリシーを ONNX に書き出し、
 ROS 2 パッケージ化して servo_demo の sim2sim に合格(ideal_joint 誤差 1 センチラジアン未満)。
 学習は ROS 2 を通さない。本体の学習サーバ(`learning-server` ブランチ)が 1 シーンの K 体を
-1 往復でまとめてステップし、servo_demo で 16 体並列 1,850 env steps/s(PPO 400k ステップが 4 分弱、整定誤差 0.006 rad、sim2sim PASS)。ROS 2 は配備と sim2sim の経路。
-GUI はこれから。
+1 往復でまとめてステップし、servo_demo で 16 体並列 1,850 env steps/s(PPO 400k ステップが 4 分弱、整定誤差 0.006 rad、sim2sim PASS)。ROS 2 は配備と sim2sim の経路で、関節指令トピック直結と
+ros2_control 経由(生成器がコントローラ設定も出す)の両方を確認済み。GUI はこれから。
 設計・マイルストーン・結果は [docs/architecture.md](docs/architecture.md) を参照。
 
 ## 構成
