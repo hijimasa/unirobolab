@@ -3,7 +3,10 @@
   "name": "diffbot_rl",
   "robot": {
     "urdf": "diffbot_description/robots/diffbot.urdf.xacro",
-    "joints": ["left_wheel_joint", "right_wheel_joint"]
+    "joints": [
+      "left_wheel_joint",
+      "right_wheel_joint"
+    ]
   },
   "control": {
     "policy_rate_hz": 10,
@@ -11,16 +14,52 @@
     "action_latency_steps": 0
   },
   "observations": [
-    { "name": "v_body",  "source": "base_lin_vel",     "unit": "m/s",   "scale": 1.0 },
-    { "name": "w_body",  "source": "base_ang_vel",     "unit": "rad/s", "scale": 0.5 },
-    { "name": "goal",    "source": "base_goal_xy",     "unit": "m",     "scale": 0.5, "clip": [-3.0, 3.0] },
-    { "name": "wheel_w", "source": "joint_velocity",   "unit": "rad/s", "scale": 0.1 },
-    { "name": "prev_a",  "source": "last_action" }
+    {
+      "name": "v_body",
+      "source": "base_lin_vel",
+      "unit": "m/s",
+      "scale": 1.0
+    },
+    {
+      "name": "w_body",
+      "source": "base_ang_vel",
+      "unit": "rad/s",
+      "scale": 0.5
+    },
+    {
+      "name": "goal",
+      "source": "base_goal_xy",
+      "unit": "m",
+      "scale": 0.5,
+      "clip": [
+        -3.0,
+        3.0
+      ]
+    },
+    {
+      "name": "wheel_w",
+      "source": "joint_velocity",
+      "unit": "rad/s",
+      "scale": 0.1
+    },
+    {
+      "name": "prev_a",
+      "source": "last_action"
+    }
   ],
   "actions": [
-    { "name": "wheel_cmd", "target": "joints", "mode": "velocity", "unit": "rad/s",
-      "scale": 10.0, "clip": [-1.0, 1.0],
-      "ros2_control_interface": "velocity_controllers/JointGroupVelocityController" }
+    {
+      "name": "wheel_cmd",
+      "target": "joints",
+      "mode": "velocity",
+      "unit": "rad/s",
+      "scale": 10.0,
+      "clip": [
+        -1.0,
+        1.0
+      ],
+      "ros2_control_interface": "velocity_controllers/JointGroupVelocityController"
+    }
   ],
   "policy": {
     "onnx": "../../generated/runs/diffbot_rl/policy.onnx",
@@ -32,5 +71,12 @@
     "namespace": "diffbot",
     "command_mode": "joint_state_topic",
     "ground_truth_topic": "/diffbot/ground_truth"
+  },
+  "safety": {
+    "_note": "Deployment guards: wheel speed cap 12 rad/s (0.6 m/s), zero the wheels on a safe stop",
+    "max_obs_age_s": 0.3,
+    "max_joint_speed": 12.0,
+    "ramp_in_s": 1.0,
+    "stop_action": "zero"
   }
 }

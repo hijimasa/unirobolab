@@ -592,3 +592,26 @@ Inference Engine(旧 Sentis)2.6 の ONNX 変換はエディタ専用(`Editor/ONN
 `python3 -m unirobolab live` を起動し、servo_demo_rl の方策が 25 Hz で目標 (0.4, −0.4) に
 最終誤差 6.7 mrad。Policy パネルの UI 本体は実行時生成の uGUI で、画面での操作確認は
 ウィンドウ表示できる環境でお願いしたい(ヘッドレスでは UI を作らない)。
+
+## 16. 優先順位 4: 実機向けの安全機構(2026-09-16)
+
+契約に `safety` 節を足し、配備ノードが実行時に守る。すべて任意で、状態(`policy/status`)に載せる。
+
+| 項目 | 挙動 |
+|---|---|
+| `max_obs_age_s` | joint_states(基体観測を使うならそれも)がこれより古いと指令を止める。既定 3 周期 |
+| `estop_topic`(`std_msgs/Bool`) | true の間は指令を止める。既定 `/<ns>/policy/estop` |
+| `stop_action` | 停止時に `hold`(配信を止める。ドライブは最後の目標を保持)か `zero`(速度・効力・Twist を一度ゼロに) |
+| `ramp_in_s` | 起動時と停止からの復帰時に、計測値から方策の目標へ線形に混ぜる。速度・効力・Twist は倍率 |
+| `joint_limits` | 位置目標を関節ごとに [下限, 上限] にクランプ |
+| `max_joint_speed` | 位置目標は 1 周期の変化量を v/rate に、速度目標は ±v に(スカラーか関節ごと) |
+| `max_joint_effort` / `max_base_speed` | 効力、Twist の [並進, 回転] をクランプ |
+
+sim2sim のシナリオに `estop_test`(追加の保持中に非常停止を入れて解除)を足し、
+「停止中と報告している」「停止中に行動を配信していない」「解除後に再開している」を判定する。
+`servo_demo_rl.sim2sim.json` に組み込んだ。実機ではまだ動かしていないので、ここまでが机上と
+シミュレーションでの検証になる。
+
+検証: servo_demo_rl(safety: 観測 150 ms、関節 ±1.5 rad、速度 6 rad/s、ランプイン 0.5 s)の sim2sim は
+追従に影響なく PASS、非常停止テストも PASS(停止中と報告、停止中の行動配信 0、解除後に再開)。
+diffbot_rl(車輪 12 rad/s、停止時ゼロ)も PASS(0.02 / 0.11 / 0.09 m)。

@@ -1,11 +1,32 @@
 {
-  "_note": "Scenario for the 25 Hz servo_demo_rl contract. max_obs_age_s 0.1 = 2.5 policy periods: joint_states publish at 30 Hz sim-time (alternating 20/40 ms gaps at 50 Hz physics, up to 50 ms), so a 40 ms loop sees states up to ~80 ms old (measured worst 82 ms at target_fps 60). Tolerances are for a learned policy, not the identity wiring check: PPO on a P-servo settles within a few centiradians at best.",
-  "goals": [[0.5, 0.5], [-0.5, -0.5], [0.0, 0.0]],
+  "_note": "Scenario for the 25 Hz servo_demo_rl contract. max_obs_age_s 0.1 = 2.5 policy periods: joint_states publish at 30 Hz sim-time (alternating 20/40 ms gaps at 50 Hz physics, up to 50 ms), so a 40 ms loop sees states up to ~80 ms old (measured worst 82 ms at target_fps 60). Tolerances are for a learned policy, not the identity wiring check: PPO on a P-servo settles within a few centiradians at best. estop_test asserts the e-stop topic during an extra hold and checks that the node stops publishing and resumes.",
+  "goals": [
+    [
+      0.5,
+      0.5
+    ],
+    [
+      -0.5,
+      -0.5
+    ],
+    [
+      0.0,
+      0.0
+    ]
+  ],
   "hold_s": 4.0,
   "settle_window_s": 1.0,
   "warmup_s": 3.0,
   "default_tolerance": 0.1,
-  "tolerance": { "ideal_joint": 0.08, "cheap_joint": 0.12 },
+  "tolerance": {
+    "ideal_joint": 0.08,
+    "cheap_joint": 0.12
+  },
   "rate_tolerance": 0.15,
-  "max_obs_age_s": 0.1
+  "max_obs_age_s": 0.1,
+  "estop_test": {
+    "at_s": 1.0,
+    "release_at_s": 3.0,
+    "hold_s": 6.0
+  }
 }

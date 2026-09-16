@@ -100,6 +100,7 @@ class Contract:
     input_name: str = "obs"
     output_name: str = "actions"
     ros: RosConfig | None = None
+    safety: dict[str, Any] = field(default_factory=dict)
 
     # ---- derived -------------------------------------------------------
     @property
@@ -257,6 +258,7 @@ def from_dict(raw: dict[str, Any], path: str = "<memory>") -> Contract:
         input_name=pol.get("input_name", "obs"),
         output_name=pol.get("output_name", "actions"),
         ros=ros,
+        safety=dict(raw.get("safety") or {}),
     )
 
 

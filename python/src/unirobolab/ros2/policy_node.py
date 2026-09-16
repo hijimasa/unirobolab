@@ -16,6 +16,11 @@ Topics (relative to the contract's ``ros`` section):
                                   geometry_msgs/Twist when the command term has ros_type: twist)
   sub  imu_topic / odom_topic     sensor_msgs/Imu / nav_msgs/Odometry (base_* observations on a real robot)
   pub  cmd_vel_topic              geometry_msgs/Twist          (base_twist actions)
+  sub  safety.estop_topic         std_msgs/Bool                (true = suspend commanding)
+
+Safety (contract "safety"): stale observations or e-stop suspend commanding (stop_action hold|zero);
+resuming ramps in from the measured state over ramp_in_s; position targets are rate-limited
+by max_joint_speed and clamped to joint_limits; velocity/effort/base speeds are clamped.
   sub  ground_truth_topic         geometry_msgs/PoseStamped    (base_* observations; velocity by finite difference)
   pub  command_topic              sensor_msgs/JointState       (command_mode=joint_state_topic)
        /<ns>/<controller>/commands std_msgs/Float64MultiArray  (command_mode=ros2_control_commands)
@@ -38,7 +43,7 @@ from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float64MultiArray, String
+from std_msgs.msg import Bool, Float64MultiArray, String
 
 SUPPORTED_OBS = {"joint_position", "joint_velocity", "joint_effort", "command", "last_action",
                  "base_lin_vel", "base_ang_vel", "projected_gravity", "imu_orientation", "base_goal_xy"}
@@ -129,6 +134,25 @@ class PolicyNode(Node):
         self.cmd_term = next((spec for spec, _, _ in self.observations if spec["source"] == "command"), None)
         self.cmd_is_twist = bool(self.cmd_term and self.cmd_term.get("ros_type") == "twist")
         self.twist_action = next((spec for spec, _, _ in self.actions if spec["target"] == "base_twist"), None)
+
+        # --- safety (contract "safety" section) ------------------------------
+        sf = self.c.get("safety") or {}
+        self.max_obs_age = float(sf.get("max_obs_age_s", 3.0 / self.rate_hz))
+        self.joint_limits = {j: (float(v[0]), float(v[1])) for j, v in (sf.get("joint_limits") or {}).items()}
+        self.max_speed = self._per_joint(sf.get("max_joint_speed"))
+        self.max_effort = self._per_joint(sf.get("max_joint_effort"))
+        self.max_base_speed = sf.get("max_base_speed")
+        self.ramp_in_s = float(sf.get("ramp_in_s", 1.0))
+        self.stop_action = sf.get("stop_action", "hold")
+        self.estop_topic = sf.get("estop_topic", f"{prefix}/policy/estop")
+        self.estop = False
+        self.safe_stopped = False      # commanding suspended (stale observations or e-stop)
+        self.safe_stop_reason = ""
+        self.ramp_start: float | None = None   # monotonic time the current ramp-in started
+        self.last_target: dict[str, float] = {}
+        self.safety_events = 0
+        self.ramp_alpha = 1.0
+        self.base_wall_time = 0.0
         self.needs_base = any(spec["source"] in ("base_lin_vel", "base_ang_vel", "projected_gravity",
                                                   "imu_orientation", "base_goal_xy")
                               for spec, _, _ in self.observations)
@@ -188,6 +212,7 @@ class PolicyNode(Node):
                 self.create_subscription(PoseStamped, self.ground_truth_topic, self._on_pose, qos)
         if self.twist_action is not None:
             self.pub_twist = self.create_publisher(Twist, self.cmd_vel_topic, qos)
+        self.create_subscription(Bool, self.estop_topic, self._on_estop, qos)
         if self.command_mode == "joint_state_topic":
             self.pub_cmd = self.create_publisher(JointState, self.command_topic, qos)
         elif self.command_mode == "ros2_control_commands":
@@ -237,6 +262,79 @@ class PolicyNode(Node):
             off += n
         return out
 
+    def _per_joint(self, spec) -> dict[str, float] | None:
+        """Scalar or {joint: value} -> {joint: value} over the contract joints; None if unset."""
+        if spec is None:
+            return None
+        if isinstance(spec, (int, float)):
+            return {j: float(spec) for j in self.joints}
+        return {j: float(v) for j, v in spec.items()}
+
+    def _on_estop(self, msg: Bool) -> None:
+        if msg.data and not self.estop:
+            self.get_logger().warn("e-stop asserted: commanding suspended")
+        elif not msg.data and self.estop:
+            self.get_logger().info("e-stop released: ramping in")
+        self.estop = bool(msg.data)
+
+    def _enter_safe_stop(self, reason: str) -> None:
+        if self.safe_stopped:
+            return
+        self.safe_stopped = True
+        self.safe_stop_reason = reason
+        self.safety_events += 1
+        if self.stop_action == "zero":
+            zeros, mode = {}, None
+            for spec, n, off in self.actions:
+                if spec["target"] == "joints" and spec["mode"] in ("velocity", "effort"):
+                    mode = spec["mode"]
+                    for j in spec.get("joints") or self.joints:
+                        zeros[j] = 0.0
+            if zeros:
+                self._publish_command(zeros, mode)
+            if self.twist_action is not None:
+                self.pub_twist.publish(Twist())
+
+    def _leave_safe_stop(self) -> None:
+        self.safe_stopped = False
+        self.safe_stop_reason = ""
+        self.ramp_start = time.monotonic()  # ramp in again from the measured state
+
+    def _apply_safety(self, targets: dict[str, float], mode: str, now: float) -> dict[str, float]:
+        """Clamp targets to the contract's safety limits and blend during ramp-in."""
+        if self.ramp_start is None:
+            self.ramp_start = now
+        alpha = 1.0 if self.ramp_in_s <= 0 else min(1.0, (now - self.ramp_start) / self.ramp_in_s)
+        q_meas: dict[str, float] = {}
+        if mode == "position":
+            arr = self._joint_array("position")
+            if arr is not None:
+                q_meas = {j: float(v) for j, v in zip(self.joints, arr)}
+        out = {}
+        for j, v in targets.items():
+            if mode == "position":
+                if alpha < 1.0 and j in q_meas:
+                    v = q_meas[j] + alpha * (v - q_meas[j])
+                if self.max_speed and j in self.max_speed:
+                    ref = self.last_target.get(j, q_meas.get(j, v))
+                    step = self.max_speed[j] / self.rate_hz
+                    v = min(max(v, ref - step), ref + step)
+                if j in self.joint_limits:
+                    lo, hi = self.joint_limits[j]
+                    v = min(max(v, lo), hi)
+            elif mode == "velocity":
+                v *= alpha
+                if self.max_speed and j in self.max_speed:
+                    v = min(max(v, -self.max_speed[j]), self.max_speed[j])
+            else:  # effort
+                v *= alpha
+                if self.max_effort and j in self.max_effort:
+                    v = min(max(v, -self.max_effort[j]), self.max_effort[j])
+            out[j] = float(v)
+        self.last_target.update(out)
+        self.ramp_alpha = alpha
+        return out
+
     def _goal_size(self) -> int:
         for spec, n, _ in self.observations:
             if spec["source"] == "command":
@@ -277,6 +375,7 @@ class PolicyNode(Node):
             w_body = np.array([r_rel[2, 1] - r_rel[1, 2], r_rel[0, 2] - r_rel[2, 0], r_rel[1, 0] - r_rel[0, 1]]) / (2 * dt)
             self.base_ang_vel = quat_to_rot(self.base_quat) @ w_body
         self.base_pos, self.base_quat, self.base_time = pos, quat, t
+        self.base_wall_time = time.monotonic()
         self.base_received = True
 
     def _on_imu(self, msg: Imu) -> None:
@@ -284,6 +383,7 @@ class PolicyNode(Node):
         self.base_quat = np.array([o.x, o.y, o.z, o.w])
         w = msg.angular_velocity
         self.body_ang_vel = np.array([w.x, w.y, w.z])
+        self.base_wall_time = time.monotonic()
         self.base_received = True
 
     def _on_odom(self, msg: Odometry) -> None:
@@ -296,6 +396,7 @@ class PolicyNode(Node):
         self.body_lin_vel = np.array([v.x, v.y, v.z])  # odometry twist is in the child (body) frame
         if not self.imu_topic:
             self.body_ang_vel = np.array([w.x, w.y, w.z])
+        self.base_wall_time = time.monotonic()
         self.base_received = True
 
     def _on_goal_twist(self, msg: Twist) -> None:
@@ -371,6 +472,19 @@ class PolicyNode(Node):
         if self.needs_base and not self.base_received:
             return
         self.obs_ages.append(now - self.js_time)
+        # watchdog + e-stop: suspend commanding, resume with a ramp-in
+        age = now - self.js_time
+        if self.needs_base and self.base_wall_time > 0:
+            age = max(age, now - self.base_wall_time)
+        if age > self.max_obs_age or self.estop:
+            reason = "e-stop" if self.estop else "stale_observations"
+            if not self.safe_stopped:
+                self.get_logger().warn(f"safe stop: {reason} (observation age {age*1e3:.0f} ms)")
+            self._enter_safe_stop(reason)
+            return
+        if self.safe_stopped:
+            self.get_logger().info("observations fresh and e-stop clear: resuming with ramp-in")
+            self._leave_safe_stop()
         frame = self._assemble()
         if frame is None:
             return
@@ -399,6 +513,15 @@ class PolicyNode(Node):
                 for j, v in zip(spec.get("joints") or self.joints, a):
                     targets_by_joint[j] = float(v)
             elif spec["target"] == "base_twist":
+                if self.ramp_start is None:
+                    self.ramp_start = now
+                self.ramp_alpha = 1.0 if self.ramp_in_s <= 0 else min(1.0, (now - self.ramp_start) / self.ramp_in_s)
+                a = a * self.ramp_alpha
+                if self.max_base_speed:
+                    vmax, wmax = float(self.max_base_speed[0]), float(self.max_base_speed[1])
+                    a = a.copy()
+                    a[0] = min(max(a[0], -vmax), vmax)
+                    a[-1] = min(max(a[-1], -wmax), wmax)
                 tw = Twist()
                 tw.linear.x = float(a[0])
                 if n == 3:
@@ -409,7 +532,7 @@ class PolicyNode(Node):
         self.last_action = raw
 
         if targets_by_joint:
-            self._publish_command(targets_by_joint, mode)
+            self._publish_command(self._apply_safety(targets_by_joint, mode, now), mode)
         if self.debug:
             self.pub_obs.publish(Float64MultiArray(data=[float(v) for v in x[0]]))
             self.pub_act.publish(Float64MultiArray(data=[float(v) for v in raw]))
@@ -447,6 +570,9 @@ class PolicyNode(Node):
             "obs_age_mean_s": round(float(np.mean(self.obs_ages)), 4) if self.obs_ages else None,
             "inference_ms": round(self.infer_ms, 3),
             "errors": list(self.errors),
+            "safety": {"stopped": self.safe_stopped, "reason": self.safe_stop_reason, "estop": self.estop,
+                       "events": self.safety_events, "ramp": round(float(self.ramp_alpha), 3),
+                       "max_obs_age_s": self.max_obs_age},
         }
         self.pub_status.publish(String(data=json.dumps(st)))
         self.obs_ages.clear()

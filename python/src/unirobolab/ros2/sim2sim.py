@@ -30,7 +30,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
-from std_msgs.msg import Float64MultiArray, String
+from std_msgs.msg import Bool, Float64MultiArray, String
 
 from unirobolab.contract import Contract
 
@@ -58,6 +58,10 @@ class Scenario:
     entity: str | None = None  # entity name for apply_link_wrench (default: ros.namespace)
     # random goals appended to `goals`: {"n": 5, "low": [...], "high": [...], "seed": 0}
     random_goals: dict | None = None
+    # e-stop test appended after the goals: assert the e-stop topic at `at_s` into an extra hold of
+    # `hold_s`, release it at `release_at_s`; pass = the node reports stopped, publishes no actions
+    # while stopped, and resumes afterwards. {"at_s": 1.0, "release_at_s": 3.0, "hold_s": 6.0}
+    estop_test: dict | None = None
 
     @staticmethod
     def default(c: Contract, amplitude: float, hold_s: float, tolerance: float) -> "Scenario":
@@ -84,7 +88,7 @@ class Scenario:
                         warmup_s=float(d.get("warmup_s", 3.0)),
                         max_obs_age_s=d.get("max_obs_age_s"),
                         disturbances=list(d.get("disturbances", [])),
-                        entity=d.get("entity"), random_goals=rg)
+                        entity=d.get("entity"), random_goals=rg, estop_test=d.get("estop_test"))
 
     def tol(self, joint: str) -> float:
         return float(self.tolerance.get(joint, self.default_tolerance))
@@ -113,6 +117,8 @@ class Evaluator(Node):
         self.create_subscription(Float64MultiArray, f"{base}/action", self._on_act, 50)
         self.create_subscription(Float64MultiArray, f"{base}/observation", self._on_obs, 50)
         self.pub_goal = self.create_publisher(Float64MultiArray, ros.goal_topic, 10)
+        estop_topic = (c.safety or {}).get("estop_topic", f"/{ros.namespace}/policy/estop")
+        self.pub_estop = self.create_publisher(Bool, estop_topic, 10)
         self.base_task = bool(c.obs_terms_by_source("base_goal_xy"))
         if self.base_task:
             self.create_subscription(PoseStamped, ros.ground_truth_topic, self._on_pose, 50)
@@ -286,6 +292,19 @@ def evaluate(c: Contract, sc: Scenario, rec: Recorder, phases: list[tuple[float,
             "samples": {"joint_states": len(rec.js_rows), "status": len(rec.status), "actions": len(rec.actions)}}
 
 
+def _evaluate_estop(rec: Recorder, times: dict[str, float]) -> dict:
+    """The node must report stopped while the e-stop is asserted, publish no actions then, and resume."""
+    t_a, t_r = times.get("assert"), times.get("release")
+    if t_a is None:
+        return {"pass": False, "detail": "e-stop was never asserted"}
+    stopped = [s for s in rec.status if s["t"] > t_a + 1.0 and (t_r is None or s["t"] < t_r) and s.get("safety")]
+    reported = bool(stopped) and all(s["safety"]["stopped"] for s in stopped)
+    acts_during = sum(1 for t, _ in rec.actions if t_a + 0.3 < t < (t_r if t_r else 1e9))
+    resumed = t_r is None or any(t > t_r + 1.5 for t, _ in rec.actions)
+    ok = reported and acts_during == 0 and resumed
+    return {"pass": ok, "detail": f"stopped reported={reported}, actions while stopped={acts_during}, resumed={resumed}"}
+
+
 def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str,
         launch_timeout_s: float = 15.0) -> int:
     if c.ros is None:
@@ -311,6 +330,7 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
     rec = Recorder()
     node = Evaluator(c, rec)
     phases: list[tuple[float, float, list[float]]] = []
+    estop_times: dict[str, float] = {}
     try:
         # wait for the node to report
         t_wait = time.monotonic()
@@ -342,6 +362,18 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
             else:
                 _spin_for(node, sc.hold_s, on_tick=None)
             phases.append((t_start, node.now(), list(g)))
+        if sc.estop_test:
+            et = sc.estop_test
+            hold = float(et.get("hold_s", 6.0)); at = float(et.get("at_s", 1.0)); rel = float(et.get("release_at_s", 3.0))
+            print(f"e-stop test: assert at {at}s, release at {rel}s, hold {hold}s")
+            t0e = node.now(); asserted = released = False
+            while node.now() - t0e < hold:
+                el = node.now() - t0e
+                if not asserted and el >= at:
+                    node.pub_estop.publish(Bool(data=True)); asserted = True; estop_times["assert"] = node.now()
+                if asserted and not released and el >= rel:
+                    node.pub_estop.publish(Bool(data=False)); released = True; estop_times["release"] = node.now()
+                _spin_for(node, 0.05)
     finally:
         node_wrench_log = list(node.wrench_log)
         node.destroy_node()
@@ -355,6 +387,9 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
 
     report = evaluate(c, sc, rec, phases)
     report["wrenches"] = node_wrench_log
+    if sc.estop_test and estop_times:
+        report["checks"]["estop"] = _evaluate_estop(rec, estop_times)
+        report["pass"] = report["pass"] and report["checks"]["estop"]["pass"]
     with open(os.path.join(out_dir, "report.json"), "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
     with open(os.path.join(out_dir, "joint_states.csv"), "w", newline="") as f:

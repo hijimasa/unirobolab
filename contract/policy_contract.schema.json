@@ -161,6 +161,89 @@
           "description": "Free-form notes (e.g. _note, _imported_from); ignored by tools."
         }
       }
+    },
+    "safety": {
+      "type": "object",
+      "description": "Runtime guards applied by the deployed node (and reported in its status). All optional.",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "max_obs_age_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Stop commanding when joint_states (or the base pose, if used) is older than this. Default 3 policy periods."
+        },
+        "joint_limits": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "description": "Per-joint [lower, upper] clamp on position targets (rad or m)."
+        },
+        "max_joint_speed": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            }
+          ],
+          "description": "Clamp: velocity targets to +-v; position targets so they move at most v * period per step (scalar or per joint)."
+        },
+        "max_joint_effort": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            }
+          ],
+          "description": "Clamp on effort targets (N*m or N)."
+        },
+        "max_base_speed": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "[linear m/s, angular rad/s] clamp for base_twist actions."
+        },
+        "ramp_in_s": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Blend from the measured state to the policy targets over this time at start and after every safe stop. Default 1.0."
+        },
+        "estop_topic": {
+          "type": "string",
+          "description": "std_msgs/Bool; true stops commanding until false. Default /<namespace>/policy/estop"
+        },
+        "stop_action": {
+          "enum": [
+            "hold",
+            "zero"
+          ],
+          "default": "hold",
+          "description": "What a safe stop publishes: hold = stop publishing (drives keep their last target), zero = zero velocity/effort targets once."
+        }
+      }
     }
   },
   "$defs": {
