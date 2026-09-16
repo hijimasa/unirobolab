@@ -1,0 +1,84 @@
+# Trimmed from an Isaac Lab run directory (logs/rsl_rl/anymal_c_flat/<run>/params/env.yaml).
+# Only the parts the importer reads are kept; values follow Isaac-Velocity-Flat-Anymal-C-v0.
+sim:
+  dt: 0.005
+  render_interval: 4
+decimation: 4
+episode_length_s: 20.0
+scene:
+  num_envs: 4096
+  robot:
+    class_type: isaaclab.assets.articulation.articulation:Articulation
+    init_state:
+      pos: [0.0, 0.0, 0.6]
+      joint_pos:
+        .*HAA: 0.0
+        .*F_HFE: 0.4
+        .*H_HFE: -0.4
+        .*F_KFE: -0.8
+        .*H_KFE: 0.8
+      joint_vel:
+        .*: 0.0
+commands:
+  base_velocity:
+    class_type: isaaclab.envs.mdp.commands.velocity_command:UniformVelocityCommand
+    asset_name: robot
+    resampling_time_range: [10.0, 10.0]
+    heading_command: true
+    ranges:
+      lin_vel_x: [-1.0, 1.0]
+      lin_vel_y: [-1.0, 1.0]
+      ang_vel_z: [-1.0, 1.0]
+actions:
+  joint_pos:
+    class_type: isaaclab.envs.mdp.actions.joint_actions:JointPositionAction
+    asset_name: robot
+    joint_names: ['.*']
+    scale: 0.5
+    offset: 0.0
+    preserve_order: false
+    clip: null
+    use_default_offset: true
+observations:
+  policy:
+    concatenate_terms: true
+    enable_corruption: true
+    history_length: 0
+    base_lin_vel:
+      func: isaaclab.envs.mdp.observations:base_lin_vel
+      params: {}
+      noise: {func: isaaclab.utils.noise.noise_model:uniform_noise, n_min: -0.1, n_max: 0.1}
+      clip: null
+      scale: null
+      history_length: 0
+    base_ang_vel:
+      func: isaaclab.envs.mdp.observations:base_ang_vel
+      params: {}
+      scale: 0.25
+      clip: null
+      history_length: 0
+    projected_gravity:
+      func: isaaclab.envs.mdp.observations:projected_gravity
+      params: {}
+      scale: null
+      history_length: 0
+    velocity_commands:
+      func: isaaclab.envs.mdp.observations:generated_commands
+      params: {command_name: base_velocity}
+      scale: null
+      history_length: 0
+    joint_pos:
+      func: isaaclab.envs.mdp.observations:joint_pos_rel
+      params: {}
+      scale: null
+      history_length: 0
+    joint_vel:
+      func: isaaclab.envs.mdp.observations:joint_vel_rel
+      params: {}
+      scale: 0.05
+      history_length: 0
+    actions:
+      func: isaaclab.envs.mdp.observations:last_action
+      params: {}
+      scale: null
+      history_length: 0

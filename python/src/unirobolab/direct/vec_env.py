@@ -31,8 +31,24 @@ class DirectVecEnv(VecEnv):
         n = len(self.entities)
         cmds = c.obs_terms_by_source("command")
         self.cmd_term = cmds[0] if cmds else None
-        self.act_term = [t for t in c.actions if t.source == "joints"][0]
-        self.act_joints = self.act_term.joints or c.joints
+        joint_terms = [t for t in c.actions if t.source == "joints"]
+        twist_terms = [t for t in c.actions if t.source == "base_twist"]
+        if joint_terms:
+            self.act_term = joint_terms[0]
+            self.act_joints = self.act_term.joints or c.joints
+            self.twist_term = None
+        elif twist_terms:
+            # the simulator takes joint commands: a base_twist action needs the task's
+            # diff_drive model {wheel_radius, wheel_separation, left_joint, right_joint}
+            self.twist_term = twist_terms[0]
+            dd = task_cfg.get("diff_drive")
+            if not dd:
+                raise ValueError("base_twist actions need task.diff_drive {wheel_radius, wheel_separation, left_joint, right_joint}")
+            self.dd = dd
+            self.act_term = self.twist_term
+            self.act_joints = [dd["left_joint"], dd["right_joint"]]
+        else:
+            raise ValueError("contract needs a joints or base_twist action term")
         self.task = Task(task_cfg, self.cmd_term.size if self.cmd_term else 2)
         if self.task.type == "joint_target" and self.cmd_term is None:
             raise ValueError("joint_target task needs a 'command' observation term")
@@ -70,10 +86,22 @@ class DirectVecEnv(VecEnv):
             if missing:
                 raise RuntimeError(f"entity {name}: joints {missing} not found (has {st.names})")
             self.index.append([st.names.index(j) for j in c.joints])
+        missing = [j for j in self.act_joints if j not in c.joints]
+        if missing:
+            raise ValueError(f"action joints {missing} are not in robot.joints")
         self.act_index = [c.joints.index(j) for j in self.act_joints]
 
         n_goal = self.cmd_term.size if self.cmd_term else 2
         self.goal = np.zeros((n, n_goal), np.float32)   # joint goal, or world xy goal
+        # action latency: the contract's control.action_latency_steps control periods pass before a
+        # command reaches the actuators (queue per env, initialised with zero actions on reset)
+        self.latency = int(c.action_latency_steps)
+        self.action_queue: list[list[np.ndarray]] = [[] for _ in range(n)]
+        # observation noise: task.obs_noise = {term_name: std} on the raw (pre-scale) values
+        self.obs_noise: dict[str, float] = {k: float(v) for k, v in (task_cfg.get("obs_noise") or {}).items()}
+        unknown = [k for k in self.obs_noise if k not in {t.name for t in c.observations}]
+        if unknown:
+            raise ValueError(f"obs_noise names unknown terms {unknown}")
         self.spawn_xy = np.zeros((n, 2), np.float32)
         self.prev_dist = np.zeros(n, np.float32)
         self.last_action = np.zeros((n, c.action_dim), np.float32)
@@ -120,6 +148,9 @@ class DirectVecEnv(VecEnv):
                 v = self._goal_body_xy(i)
             else:
                 raise ValueError(f"observation source {s!r} not supported by DirectVecEnv")
+            std = self.obs_noise.get(t.name, 0.0)
+            if std > 0:
+                v = np.asarray(v, np.float32) + self.rng.normal(0.0, std, size=np.shape(v)).astype(np.float32)
             frame[t.offset:t.end] = process_obs_term(v, t.spec)
         return frame
 
@@ -152,6 +183,7 @@ class DirectVecEnv(VecEnv):
         self.last_action[i] = 0.0
         self.frames[i] = []
         self.t[i] = 0
+        self.action_queue[i] = [np.zeros(self.c.action_dim, np.float32) for _ in range(self.latency)]
         self.episode_terms[i] = {k: 0.0 for k in self.task.weights}
         self.last_q[i] = self._q(i)
 
@@ -174,10 +206,20 @@ class DirectVecEnv(VecEnv):
         prev_actions = self.last_action.copy()
         for i in range(n):
             raw = self._actions[i].copy()
+            if self.latency > 0:
+                # the policy's newest action enters the queue; the one applied now is `latency` steps old
+                self.action_queue[i].append(raw.copy())
+                raw = self.action_queue[i].pop(0)
             clipped, target = process_action_term(raw[a_off:a_end], self.act_term.spec)
             raw[a_off:a_end] = clipped
-            self.last_action[i] = raw
-            mode = self.act_term.spec.get("mode", "position")
+            self.last_action[i] = raw  # what the actuators received (also the last_action observation)
+            if self.twist_term is not None:
+                vx = float(target[0]); wz = float(target[-1])
+                r, b = float(self.dd["wheel_radius"]), float(self.dd["wheel_separation"])
+                target = np.array([(vx - wz * b / 2) / r, (vx + wz * b / 2) / r], dtype=np.float32)
+                mode = "velocity"
+            else:
+                mode = self.act_term.spec.get("mode", "position")
             commands.append({"name": list(self.act_joints), mode: target})
         t0 = time.perf_counter()
         self.states, _ = self.client.step(self.entities, self.task.steps_per_action, commands)
@@ -213,7 +255,9 @@ class DirectVecEnv(VecEnv):
                 dones[i] = True
                 if not reached:
                     info["TimeLimit.truncated"] = True
-                info["success"] = bool(reached)
+                # success: terminated at the goal, or (without termination) ended inside the radius
+                info["success"] = bool(reached) or (self.task.type == "base_target"
+                                                    and info["abs_err"] <= self.task.reach_radius)
                 info["episode_terms"] = dict(self.episode_terms[i])
                 info["terminal_observation"] = self._obs(i)
                 to_reset.append(i)

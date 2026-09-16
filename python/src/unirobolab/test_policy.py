@@ -37,18 +37,18 @@ def build_identity_weights(c: Contract) -> tuple[np.ndarray, np.ndarray]:
     frame_off = c.obs_dim * (c.history_length - 1)
     # The node applies: value -> deadband -> *scale + offset -> clip on observations,
     # and raw -> clip -> *scale + offset on actions. Undo both so target == goal.
+    cs, csh, as_, ash = cmd.scale, cmd.shift, act.scale, act.shift
     for i in range(cmd.size):
         row = frame_off + cmd.offset + i
         col = act.offset + i
         # obs value = goal*cmd.scale + cmd.shift  ->  goal = (obs - cmd.shift)/cmd.scale
         # raw action needed = (goal - act.shift)/act.scale
-        w[row, col] = 1.0 / (cmd.scale * act.scale)
-        b[col] = (-cmd.shift / cmd.scale - act.shift) / act.scale
+        w[row, col] = 1.0 / (cs[i] * as_[i])
+        b[col] = (-csh[i] / cs[i] - ash[i]) / as_[i]
     clip = act.clip
     if clip is not None:
         lo, hi = clip
-        print(f"note: action {act.name!r} clips raw output to [{lo}, {hi}] -> "
-              f"targets beyond [{lo*act.scale+act.shift:g}, {hi*act.scale+act.shift:g}] saturate")
+        print(f"note: action {act.name!r} clips raw output to [{lo}, {hi}] (per-element scale/offset apply after)")
     return w, b
 
 

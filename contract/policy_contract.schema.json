@@ -142,6 +142,23 @@
         "ground_truth_topic": {
           "type": "string",
           "description": "geometry_msgs/PoseStamped with the base pose (the simulator's ground truth; on a real robot, odometry/localization). Needed when the contract observes base_* / projected_gravity / imu_orientation / base_goal_xy. Default /<namespace>/ground_truth"
+        },
+        "imu_topic": {
+          "type": "string",
+          "description": "sensor_msgs/Imu; supplies base_ang_vel and imu_orientation/projected_gravity when set (takes precedence over ground truth)"
+        },
+        "odom_topic": {
+          "type": "string",
+          "description": "nav_msgs/Odometry; supplies base_lin_vel (twist in the child frame) and the pose when set"
+        },
+        "cmd_vel_topic": {
+          "type": "string",
+          "description": "geometry_msgs/Twist published by base_twist actions. Default /<namespace>/cmd_vel"
+        }
+      },
+      "patternProperties": {
+        "^_": {
+          "description": "Free-form notes (e.g. _note, _imported_from); ignored by tools."
         }
       }
     }
@@ -199,13 +216,36 @@
           "$ref": "#/$defs/unit"
         },
         "scale": {
-          "type": "number",
+          "description": "Scalar or one value per element of the term.",
           "default": 1.0,
-          "description": "Applied after deadband: value*scale + offset, then clip."
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 1
+            }
+          ]
         },
         "offset": {
-          "type": "number",
-          "default": 0.0
+          "description": "Scalar or one value per element (e.g. default joint positions for joint_pos_rel).",
+          "default": 0.0,
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 1
+            }
+          ]
         },
         "clip": {
           "type": "array",
@@ -228,9 +268,22 @@
           "type": "integer",
           "minimum": 1,
           "description": "Required for source=command/custom. Joint sources take their size from joints; last_action from the action layout."
+        },
+        "ros_type": {
+          "enum": [
+            "float64_array",
+            "twist"
+          ],
+          "default": "float64_array",
+          "description": "For source=command: message type of the goal topic. twist packs [linear.x, linear.y, angular.z] (size must be 3)."
         }
       },
-      "description": "Processing order: deadband -> *scale + offset -> clip."
+      "description": "Processing order: deadband -> *scale + offset -> clip.",
+      "patternProperties": {
+        "^_": {
+          "description": "Free-form notes (e.g. _note, _imported_from); ignored by tools."
+        }
+      }
     },
     "action_term": {
       "type": "object",
@@ -249,7 +302,8 @@
             "joints",
             "base_twist",
             "custom"
-          ]
+          ],
+          "description": "joints: joint commands; base_twist: geometry_msgs/Twist on ros.cmd_vel_topic (size 2 = [vx, wz], size 3 = [vx, vy, wz])"
         },
         "joints": {
           "type": "array",
@@ -268,12 +322,36 @@
           "$ref": "#/$defs/unit"
         },
         "scale": {
-          "type": "number",
-          "default": 1.0
+          "description": "Scalar or one value per element of the term.",
+          "default": 1.0,
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 1
+            }
+          ]
         },
         "offset": {
-          "type": "number",
-          "default": 0.0
+          "description": "Scalar or one value per element (e.g. default joint positions for joint_pos_rel).",
+          "default": 0.0,
+          "oneOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 1
+            }
+          ]
         },
         "clip": {
           "type": "array",
@@ -293,7 +371,17 @@
           "description": "Required for target=custom; base_twist defaults to 2."
         }
       },
-      "description": "Processing order on the raw policy output: clip -> *scale + offset -> publish."
+      "description": "Processing order on the raw policy output: clip -> *scale + offset -> publish.",
+      "patternProperties": {
+        "^_": {
+          "description": "Free-form notes (e.g. _note, _imported_from); ignored by tools."
+        }
+      }
+    }
+  },
+  "patternProperties": {
+    "^_": {
+      "description": "Free-form notes (e.g. _note, _imported_from); ignored by tools."
     }
   }
 }

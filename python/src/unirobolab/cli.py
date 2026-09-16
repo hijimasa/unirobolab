@@ -66,6 +66,26 @@ def cmd_sim2sim(a) -> int:
     return sim2sim.run(c, sc, a.pkg, a.ns, a.out, launch_timeout_s=a.launch_timeout)
 
 
+def cmd_import_isaaclab(a) -> int:
+    import json as _json
+    from unirobolab.importers import isaaclab
+    env = isaaclab.load_env_yaml(a.env_yaml)
+    joints = [j.strip() for j in a.joints.split(",")] if "," in a.joints or not os.path.isfile(a.joints) \
+        else [line.strip() for line in open(a.joints, encoding="utf-8") if line.strip()]
+    try:
+        raw = isaaclab.build_contract(env, joints, a.name, a.onnx, urdf=a.urdf, namespace=a.namespace,
+                                      obs_group=a.obs_group, asset=a.asset, action_name=a.action)
+    except isaaclab.ImportError_ as e:
+        print(f"cannot import: {e}", file=sys.stderr)
+        return 2
+    contract_mod.from_dict(raw, a.out)  # layout check
+    with open(a.out, "w", encoding="utf-8") as f:
+        _json.dump(raw, f, indent=2, ensure_ascii=False); f.write("\n")
+    print(f"wrote {a.out}")
+    print(contract_mod.describe(contract_mod.load(a.out)))
+    return 0
+
+
 def cmd_train(a) -> int:
     from unirobolab import train
     ents = a.entities.split(",") if a.entities else None
@@ -108,6 +128,19 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--launch-timeout", type=float, default=15.0)
     s.add_argument("--out", default="sim2sim_out", help="report directory")
     s.set_defaults(fn=cmd_sim2sim)
+
+    s = sub.add_parser("import-isaaclab", help="build a contract from an Isaac Lab run's params/env.yaml")
+    s.add_argument("env_yaml")
+    s.add_argument("--joints", required=True, help="joint order the policy was trained with: comma list or a file with one name per line")
+    s.add_argument("--onnx", required=True, help="exported policy (path relative to the contract file)")
+    s.add_argument("--out", required=True)
+    s.add_argument("--name", default="imported")
+    s.add_argument("--urdf", default="")
+    s.add_argument("--namespace", default="")
+    s.add_argument("--obs-group", default="policy")
+    s.add_argument("--asset", default="robot")
+    s.add_argument("--action", help="action term name (default: the first)")
+    s.set_defaults(fn=cmd_import_isaaclab)
 
     s = sub.add_parser("train", help="train a policy for the contract (needs ROS 2 + the simulator)")
     add_contract(s)

@@ -1,0 +1,16 @@
+{
+  "_note": "Robustness variant of servo_demo_rl.sim2sim.json: five extra random goals and a torque kick on the cheap servo's arm 1 s into every hold (world frame, 0.2 s). The policy must recover inside the settle window.",
+  "goals": [[0.5, 0.5], [-0.5, -0.5]],
+  "random_goals": { "n": 5, "low": [-0.8, -0.8], "high": [0.8, 0.8], "seed": 1 },
+  "hold_s": 4.0,
+  "settle_window_s": 1.0,
+  "warmup_s": 3.0,
+  "default_tolerance": 0.1,
+  "tolerance": { "ideal_joint": 0.08, "cheap_joint": 0.12 },
+  "rate_tolerance": 0.15,
+  "max_obs_age_s": 0.1,
+  "entity": "ServoDemo",
+  "disturbances": [
+    { "at_s": 1.0, "link": "cheap_arm_link", "force": [0.0, 0.0, 0.0], "torque": [0.3, 0.0, 0.0], "duration_s": 0.2 }
+  ]
+}

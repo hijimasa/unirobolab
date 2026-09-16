@@ -8,6 +8,7 @@ license = "Apache-2.0"
 dependencies = [
   "numpy>=1.24",
   "onnx>=1.14",
+  "pyyaml>=6",
 ]
 
 [project.optional-dependencies]

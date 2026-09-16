@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import os
+
+import numpy as np
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -44,12 +46,14 @@ class Term:
         return self.spec.get("source", self.spec.get("target", ""))
 
     @property
-    def scale(self) -> float:
-        return float(self.spec.get("scale", 1.0))
+    def scale(self) -> np.ndarray:
+        """Per-element scale (broadcast from a scalar)."""
+        return np.broadcast_to(np.asarray(self.spec.get("scale", 1.0), dtype=np.float32), (self.size,)).copy()
 
     @property
-    def shift(self) -> float:
-        return float(self.spec.get("offset", 0.0))
+    def shift(self) -> np.ndarray:
+        """Per-element offset (broadcast from a scalar)."""
+        return np.broadcast_to(np.asarray(self.spec.get("offset", 0.0), dtype=np.float32), (self.size,)).copy()
 
     @property
     def clip(self) -> tuple[float, float] | None:
@@ -74,6 +78,9 @@ class RosConfig:
     goal_topic: str
     controller_name: str | None = None
     ground_truth_topic: str | None = None
+    imu_topic: str | None = None
+    odom_topic: str | None = None
+    cmd_vel_topic: str | None = None
 
 
 @dataclass
@@ -200,6 +207,15 @@ def from_dict(raw: dict[str, Any], path: str = "<memory>") -> Contract:
     obs_sizes = [_term_size(o, joints, action_dim) for o in raw["observations"]]
     observations = _layout(raw["observations"], obs_sizes)
 
+    for t in observations + actions:
+        for key in ("scale", "offset"):
+            v = t.spec.get(key)
+            if isinstance(v, list) and len(v) != t.size:
+                raise ContractError(f"{t.name}: {key} has {len(v)} values, term has {t.size}")
+        if t.source == "command" and t.spec.get("ros_type") == "twist" and t.size != 3:
+            raise ContractError(f"{t.name}: ros_type twist needs size 3 ([vx, vy, wz])")
+        if t.source == "base_twist" and t.size not in (2, 3):
+            raise ContractError(f"{t.name}: base_twist size must be 2 ([vx, wz]) or 3 ([vx, vy, wz])")
     names = [t.name for t in observations] + [t.name for t in actions]
     if len(set(names)) != len(names):
         raise ContractError("observation/action term names must be unique")
@@ -218,6 +234,9 @@ def from_dict(raw: dict[str, Any], path: str = "<memory>") -> Contract:
             goal_topic=r.get("goal_topic", f"{prefix}/policy/command"),
             controller_name=r.get("controller_name"),
             ground_truth_topic=r.get("ground_truth_topic", f"{prefix}/ground_truth"),
+            imu_topic=r.get("imu_topic"),
+            odom_topic=r.get("odom_topic"),
+            cmd_vel_topic=r.get("cmd_vel_topic", f"{prefix}/cmd_vel"),
         )
         if ros.command_mode == "ros2_control_commands" and not ros.controller_name:
             raise ContractError("ros.command_mode=ros2_control_commands needs ros.controller_name")

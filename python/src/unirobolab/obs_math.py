@@ -17,7 +17,7 @@ def process_obs_term(v: np.ndarray, spec: dict) -> np.ndarray:
     db = float(spec.get("deadband", 0.0))
     if db > 0:
         v[np.abs(v) < db] = 0.0
-    v = v * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
+    v = v * np.asarray(spec.get("scale", 1.0), dtype=np.float32) + np.asarray(spec.get("offset", 0.0), dtype=np.float32)
     clip = spec.get("clip")
     if clip:
         v = np.clip(v, clip[0], clip[1])
@@ -30,5 +30,5 @@ def process_action_term(raw: np.ndarray, spec: dict) -> tuple[np.ndarray, np.nda
     clip = spec.get("clip")
     if clip:
         a = np.clip(a, clip[0], clip[1])
-    target = a * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
+    target = a * np.asarray(spec.get("scale", 1.0), dtype=np.float32) + np.asarray(spec.get("offset", 0.0), dtype=np.float32)
     return a, target

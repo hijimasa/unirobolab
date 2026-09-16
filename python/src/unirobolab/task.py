@@ -10,7 +10,8 @@ Task types:
   base_target   goal = a point on the ground around the spawn pose (the contract's
                 ``base_goal_xy`` observation gives it in the body frame);
                 terms base_distance / base_progress / base_reached / action_rate / velocity.
-                The episode ends with success when the base is within reach_radius.
+                base_reached pays every step inside reach_radius; with terminate_on_reach the
+                episode ends there instead (default: keep going and learn to hold the goal).
 """
 
 from __future__ import annotations
@@ -39,6 +40,9 @@ class Task:
             self.goal_radius = tuple(cfg.get("goal_radius", [1.0, 2.5]))
             self.goal_angle = tuple(cfg.get("goal_angle_deg", [-180.0, 180.0]))
             self.reach_radius = float(cfg.get("reach_radius", 0.15))
+            # terminate_on_reach=false keeps the episode running inside the goal radius, so the
+            # policy also learns to stop there (a deployed controller does not get reset at the goal)
+            self.terminate_on_reach = bool(cfg.get("terminate_on_reach", False))
             allowed = BASE_TERMS
         else:
             raise ValueError(f"unknown task type {self.type!r}")
@@ -76,4 +80,4 @@ class Task:
             "velocity": float(np.sum(np.abs(qd))),
         }
         contrib = {k: w * terms[k] for k, w in self.weights.items()}
-        return float(sum(contrib.values())), contrib, bool(reached)
+        return float(sum(contrib.values())), contrib, bool(reached and self.terminate_on_reach)

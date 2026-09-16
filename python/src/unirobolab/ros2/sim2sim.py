@@ -34,6 +34,12 @@ from std_msgs.msg import Float64MultiArray, String
 
 from unirobolab.contract import Contract
 
+try:
+    from geometry_msgs.msg import Wrench
+    from simulation_extra_interfaces.srv import ApplyLinkWrench
+except ImportError:  # older interface package
+    ApplyLinkWrench = None
+
 
 @dataclass
 class Scenario:
@@ -45,6 +51,13 @@ class Scenario:
     rate_tolerance: float  # fraction
     warmup_s: float = 3.0
     max_obs_age_s: float | None = None  # default: 2 policy periods
+    # disturbances applied during every hold, relative to its start:
+    #   [{"at_s": 1.0, "link": "", "force": [fx, fy, fz], "torque": [tx, ty, tz], "duration_s": 0.2}]
+    # (simulator apply_link_wrench: world frame, ROS axes, force at the link's centre of mass)
+    disturbances: list[dict] = field(default_factory=list)
+    entity: str | None = None  # entity name for apply_link_wrench (default: ros.namespace)
+    # random goals appended to `goals`: {"n": 5, "low": [...], "high": [...], "seed": 0}
+    random_goals: dict | None = None
 
     @staticmethod
     def default(c: Contract, amplitude: float, hold_s: float, tolerance: float) -> "Scenario":
@@ -57,13 +70,21 @@ class Scenario:
     def load(path: str, c: Contract) -> "Scenario":
         with open(path, encoding="utf-8") as f:
             d = json.load(f)
-        return Scenario(goals=d["goals"], hold_s=float(d.get("hold_s", 4.0)),
+        goals = list(d["goals"])
+        rg = d.get("random_goals")
+        if rg:
+            rng = np.random.default_rng(int(rg.get("seed", 0)))
+            lo, hi = np.asarray(rg["low"], float), np.asarray(rg["high"], float)
+            goals += [list(map(float, rng.uniform(lo, hi))) for _ in range(int(rg.get("n", 5)))]
+        return Scenario(goals=goals, hold_s=float(d.get("hold_s", 4.0)),
                         settle_window_s=float(d.get("settle_window_s", 1.0)),
                         tolerance=dict(d.get("tolerance", {})),
                         default_tolerance=float(d.get("default_tolerance", 0.1)),
                         rate_tolerance=float(d.get("rate_tolerance", 0.15)),
                         warmup_s=float(d.get("warmup_s", 3.0)),
-                        max_obs_age_s=d.get("max_obs_age_s"))
+                        max_obs_age_s=d.get("max_obs_age_s"),
+                        disturbances=list(d.get("disturbances", [])),
+                        entity=d.get("entity"), random_goals=rg)
 
     def tol(self, joint: str) -> float:
         return float(self.tolerance.get(joint, self.default_tolerance))
@@ -95,6 +116,32 @@ class Evaluator(Node):
         self.base_task = bool(c.obs_terms_by_source("base_goal_xy"))
         if self.base_task:
             self.create_subscription(PoseStamped, ros.ground_truth_topic, self._on_pose, 50)
+        self.cli_wrench = None
+        if ApplyLinkWrench is not None:
+            self.cli_wrench = self.create_client(ApplyLinkWrench, "/apply_link_wrench")
+        self.wrench_log: list[dict] = []
+
+    def apply_wrench(self, entity: str, d: dict) -> None:
+        if self.cli_wrench is None or not self.cli_wrench.wait_for_service(timeout_sec=2.0):
+            print("apply_link_wrench service not available; disturbance skipped", file=sys.stderr)
+            return
+        req = ApplyLinkWrench.Request()
+        req.entity = entity
+        req.link = d.get("link", "")
+        f = d.get("force", [0, 0, 0]); tq = d.get("torque", [0, 0, 0])
+        req.wrench = Wrench()
+        req.wrench.force.x, req.wrench.force.y, req.wrench.force.z = map(float, f)
+        req.wrench.torque.x, req.wrench.torque.y, req.wrench.torque.z = map(float, tq)
+        req.duration = float(d.get("duration_s", 0.0))
+        fut = self.cli_wrench.call_async(req)
+        end = time.monotonic() + 5.0
+        while rclpy.ok() and not fut.done() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.01)
+        res = fut.result() if fut.done() else None
+        ok = res is not None and res.result == ApplyLinkWrench.Response.RESULT_OK
+        self.wrench_log.append({"t": self.now(), "entity": entity, "ok": ok, **d})
+        if not ok:
+            print(f"apply_link_wrench failed: {getattr(res, 'error_message', 'timeout')}", file=sys.stderr)
 
     def now(self) -> float:
         return time.monotonic() - self.t0
@@ -235,6 +282,7 @@ def evaluate(c: Contract, sc: Scenario, rec: Recorder, phases: list[tuple[float,
 
     overall = all(v["pass"] for v in checks.values())
     return {"contract": c.name, "pass": overall, "checks": checks,
+            "scenario": {"goals": len(phases), "hold_s": sc.hold_s, "disturbances": sc.disturbances},
             "samples": {"joint_states": len(rec.js_rows), "status": len(rec.status), "actions": len(rec.actions)}}
 
 
@@ -282,10 +330,20 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
             for _ in range(3):
                 node.send_goal(g)
                 _spin_for(node, 0.05)
-            print(f"goal {g} hold {sc.hold_s}s")
-            _spin_for(node, sc.hold_s, on_tick=None)
+            print(f"goal {g} hold {sc.hold_s}s" + (f" with {len(sc.disturbances)} disturbances" if sc.disturbances else ""))
+            if sc.disturbances:
+                entity = sc.entity or c.ros.namespace
+                pending = sorted(sc.disturbances, key=lambda d: float(d.get("at_s", 0.0)))
+                hold_start = node.now()
+                while node.now() - hold_start < sc.hold_s:
+                    if pending and node.now() - hold_start >= float(pending[0].get("at_s", 0.0)):
+                        node.apply_wrench(entity, pending.pop(0))
+                    _spin_for(node, 0.05)
+            else:
+                _spin_for(node, sc.hold_s, on_tick=None)
             phases.append((t_start, node.now(), list(g)))
     finally:
+        node_wrench_log = list(node.wrench_log)
         node.destroy_node()
         rclpy.try_shutdown()
         if proc is not None:
@@ -296,6 +354,7 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
 
     report = evaluate(c, sc, rec, phases)
+    report["wrenches"] = node_wrench_log
     with open(os.path.join(out_dir, "report.json"), "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2)
     with open(os.path.join(out_dir, "joint_states.csv"), "w", newline="") as f:

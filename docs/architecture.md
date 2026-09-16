@@ -509,3 +509,51 @@ diffbot は `use_gnss:=false use_magnetic_guide:=false` も付けないと GNSS 
   (`docs/unity6-gpu-physics-survey.md`)。
 - 計測の落とし穴: `ps` の %cpu は累積平均で、停止直前のプロセスを拾って「アイドルで 27 コア」と
   誤認した。`top -d` の区間計測で見直した。
+
+## 14. 優先順位 1: 外部で学習した方策の取り込みと、実機向けの観測・行動(2026-09-16)
+
+配備層を「どこで学習した方策でも」にするための拡張。
+
+### 契約の拡張
+- `scale` / `offset` は要素ごとの配列も可(Isaac Lab の `joint_pos_rel` = q − q_default や、
+  関節ごとの行動スケールを表す)。処理順は変わらず、`obs_math` / 配備ノードは numpy の
+  ブロードキャストで扱う。`_` で始まるキーは注釈として許す。
+- `command` 項に `ros_type: twist`(`[vx, vy, wz]`、`geometry_msgs/Twist` で受ける)。
+- 行動ターゲット `base_twist`(size 2 = `[vx, wz]`、3 = `[vx, vy, wz]`)。配備ノードは
+  `ros.cmd_vel_topic` に Twist を出す。学習環境(Unity は関節指令しか受けない)では
+  `task.diff_drive {wheel_radius, wheel_separation, left_joint, right_joint}` で車輪速度に変換する。
+- `ros.imu_topic`(`sensor_msgs/Imu` → 角速度・姿勢)、`ros.odom_topic`(`nav_msgs/Odometry` →
+  基体座標系の線速度・位置)。指定があれば ground_truth より優先し、両方あれば ground_truth は購読しない。
+
+### Isaac Lab 取り込み器(`unirobolab import-isaaclab`)
+`logs/rsl_rl/<task>/<run>/params/env.yaml`(ManagerBasedRLEnvCfg のダンプ)から契約を作る。
+- `sim.dt` × `decimation` → 周期。観測グループ(既定 `policy`)の項を yaml の順に
+  `base_lin_vel` / `base_ang_vel` / `projected_gravity` / `generated_commands`(速度指令 → `command`、
+  twist)/ `joint_pos_rel` / `joint_vel_rel` / `last_action` へ写す。`_rel` は `init_state.joint_pos` の
+  正規表現テーブルを関節順で解決して `offset = −q_default × scale`。
+- 行動 `JointPositionAction` 等: `scale`(スカラーか正規表現テーブル)、`use_default_offset` →
+  `offset = q_default`。観測と同名なら `_action` を付ける。
+- **関節順は利用者が渡す**(`--joints`)。Isaac Sim の関節順は USD の走査順で URDF と一致しないため、
+  env.yaml からは分からない。height scan や画像は契約に無いので拒否する。
+- `python/tests/fixtures/isaaclab_anymal_flat_env.yaml`(Anymal-C flat 相当)で単体テスト。
+  Isaac Lab 実機での通し検証は未実施(環境が無い)。配線確認ポリシーは command と joints の
+  サイズが等しい契約向けなので、歩行の契約には使えない。
+
+### 学習環境の追加(優先順位 2 の一部)
+- `control.action_latency_steps` を学習環境で実装: 行動は N 周期遅れて適用され、
+  `last_action` 観測はアクチュエータが受け取った方を返す。
+- `task.obs_noise = {項名: 標準偏差}`: スケール前の生値にガウスノイズ。
+
+### 目標に「留まる」ことを学習させる(2026-09-16)
+
+diffbot の配備で目標付近の最終距離が 0.22〜0.26 m とふらつき、許容 0.25 m を僅差で割った。
+原因は学習が「到達半径に入った時点でエピソード終了」だったため、到達後の挙動が未学習だったこと。
+配備ではノードは目標でリセットされずに動き続ける。`task.terminate_on_reach`(既定 false)を足し、
+エピソードは最後まで走らせて `base_reached` を半径内の毎ステップに払う(「留まる」報酬)。
+成功判定は「エピソード終了時に半径内」。再学習は早期終了付きで 211 s(92.8k ステップ)、
+決定論評価の最終距離 0.067 m(終了型の 0.22 m から改善)。
+
+### sim2sim の頑健性シナリオ(優先順位 2)
+シナリオに `random_goals`(範囲と個数)と `disturbances`(保持中の指定時刻に本体の
+`apply_link_wrench` で力・トルクを与える)を足した。`servo_demo_rl.robust.sim2sim.json` は
+ランダム目標 5 点と、各保持の 1 s 後に cheap 側アームへ 0.3 N·m × 0.2 s の蹴りを入れる。

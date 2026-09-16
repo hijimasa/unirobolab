@@ -12,7 +12,10 @@ package depends only on rclpy, numpy and onnxruntime.
 
 Topics (relative to the contract's ``ros`` section):
   sub  joint_states_topic         sensor_msgs/JointState
-  sub  goal_topic                 std_msgs/Float64MultiArray   (the 'command' observation, or world x,y for base_goal_xy)
+  sub  goal_topic                 std_msgs/Float64MultiArray   (the 'command' observation, or world x,y for base_goal_xy;
+                                  geometry_msgs/Twist when the command term has ros_type: twist)
+  sub  imu_topic / odom_topic     sensor_msgs/Imu / nav_msgs/Odometry (base_* observations on a real robot)
+  pub  cmd_vel_topic              geometry_msgs/Twist          (base_twist actions)
   sub  ground_truth_topic         geometry_msgs/PoseStamped    (base_* observations; velocity by finite difference)
   pub  command_topic              sensor_msgs/JointState       (command_mode=joint_state_topic)
        /<ns>/<controller>/commands std_msgs/Float64MultiArray  (command_mode=ros2_control_commands)
@@ -31,7 +34,9 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Twist
+from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Imu
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray, String
 
@@ -59,7 +64,7 @@ def process_obs_term(v: np.ndarray, spec: dict) -> np.ndarray:
     db = float(spec.get("deadband", 0.0))
     if db > 0:
         v[np.abs(v) < db] = 0.0
-    v = v * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
+    v = v * np.asarray(spec.get("scale", 1.0), dtype=np.float32) + np.asarray(spec.get("offset", 0.0), dtype=np.float32)
     clip = spec.get("clip")
     if clip:
         v = np.clip(v, clip[0], clip[1])
@@ -72,7 +77,7 @@ def process_action_term(raw: np.ndarray, spec: dict) -> tuple[np.ndarray, np.nda
     clip = spec.get("clip")
     if clip:
         a = np.clip(a, clip[0], clip[1])
-    target = a * float(spec.get("scale", 1.0)) + float(spec.get("offset", 0.0))
+    target = a * np.asarray(spec.get("scale", 1.0), dtype=np.float32) + np.asarray(spec.get("offset", 0.0), dtype=np.float32)
     return a, target
 
 
@@ -118,6 +123,12 @@ class PolicyNode(Node):
         self.goal_topic = ros.get("goal_topic", f"{prefix}/policy/command")
         self.controller_name = ros.get("controller_name")
         self.ground_truth_topic = ros.get("ground_truth_topic", f"{prefix}/ground_truth")
+        self.imu_topic = ros.get("imu_topic")
+        self.odom_topic = ros.get("odom_topic")
+        self.cmd_vel_topic = ros.get("cmd_vel_topic", f"{prefix}/cmd_vel")
+        self.cmd_term = next((spec for spec, _, _ in self.observations if spec["source"] == "command"), None)
+        self.cmd_is_twist = bool(self.cmd_term and self.cmd_term.get("ros_type") == "twist")
+        self.twist_action = next((spec for spec, _, _ in self.actions if spec["target"] == "base_twist"), None)
         self.needs_base = any(spec["source"] in ("base_lin_vel", "base_ang_vel", "projected_gravity",
                                                   "imu_orientation", "base_goal_xy")
                               for spec, _, _ in self.observations)
@@ -148,6 +159,9 @@ class PolicyNode(Node):
         self.base_lin_vel = np.zeros(3); self.base_ang_vel = np.zeros(3)
         self.base_time: float | None = None
         self.base_received = False
+        # velocities already in the body frame when they come from IMU/odometry
+        self.body_lin_vel: np.ndarray | None = None
+        self.body_ang_vel: np.ndarray | None = None
         self.last_action = np.zeros(self.action_dim, dtype=np.float32)
         self.frames: collections.deque = collections.deque(maxlen=self.history)
         self.steps = 0
@@ -158,9 +172,22 @@ class PolicyNode(Node):
         qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
                          history=HistoryPolicy.KEEP_LAST, depth=10)
         self.create_subscription(JointState, self.joint_states_topic, self._on_js, qos)
-        self.create_subscription(Float64MultiArray, self.goal_topic, self._on_goal, qos)
+        goal_topic = (self.cmd_term or {}).get("ros_topic", self.goal_topic)
+        if self.cmd_is_twist:
+            self.create_subscription(Twist, goal_topic, self._on_goal_twist, qos)
+        else:
+            self.create_subscription(Float64MultiArray, goal_topic, self._on_goal, qos)
         if self.needs_base:
-            self.create_subscription(PoseStamped, self.ground_truth_topic, self._on_pose, qos)
+            # sources by priority: IMU (angular velocity, orientation), odometry (linear velocity,
+            # pose), ground truth (everything, simulation only)
+            if self.imu_topic:
+                self.create_subscription(Imu, self.imu_topic, self._on_imu, qos)
+            if self.odom_topic:
+                self.create_subscription(Odometry, self.odom_topic, self._on_odom, qos)
+            if not (self.imu_topic and self.odom_topic):
+                self.create_subscription(PoseStamped, self.ground_truth_topic, self._on_pose, qos)
+        if self.twist_action is not None:
+            self.pub_twist = self.create_publisher(Twist, self.cmd_vel_topic, qos)
         if self.command_mode == "joint_state_topic":
             self.pub_cmd = self.create_publisher(JointState, self.command_topic, qos)
         elif self.command_mode == "ros2_control_commands":
@@ -252,6 +279,29 @@ class PolicyNode(Node):
         self.base_pos, self.base_quat, self.base_time = pos, quat, t
         self.base_received = True
 
+    def _on_imu(self, msg: Imu) -> None:
+        o = msg.orientation
+        self.base_quat = np.array([o.x, o.y, o.z, o.w])
+        w = msg.angular_velocity
+        self.body_ang_vel = np.array([w.x, w.y, w.z])
+        self.base_received = True
+
+    def _on_odom(self, msg: Odometry) -> None:
+        p = msg.pose.pose.position
+        self.base_pos = np.array([p.x, p.y, p.z])
+        if not self.imu_topic:
+            o = msg.pose.pose.orientation
+            self.base_quat = np.array([o.x, o.y, o.z, o.w])
+        v = msg.twist.twist.linear; w = msg.twist.twist.angular
+        self.body_lin_vel = np.array([v.x, v.y, v.z])  # odometry twist is in the child (body) frame
+        if not self.imu_topic:
+            self.body_ang_vel = np.array([w.x, w.y, w.z])
+        self.base_received = True
+
+    def _on_goal_twist(self, msg: Twist) -> None:
+        self.goal = np.array([msg.linear.x, msg.linear.y, msg.angular.z], dtype=np.float32)
+        self.goal_received = True
+
     def _on_goal(self, msg: Float64MultiArray) -> None:
         data = np.asarray(msg.data, dtype=np.float32)
         if data.shape[0] != self.goal.shape[0]:
@@ -290,9 +340,9 @@ class PolicyNode(Node):
             elif s == "last_action":
                 v = self.last_action
             elif s == "base_lin_vel":
-                v = quat_to_rot(self.base_quat).T @ self.base_lin_vel
+                v = self.body_lin_vel if self.body_lin_vel is not None else quat_to_rot(self.base_quat).T @ self.base_lin_vel
             elif s == "base_ang_vel":
-                v = quat_to_rot(self.base_quat).T @ self.base_ang_vel
+                v = self.body_ang_vel if self.body_ang_vel is not None else quat_to_rot(self.base_quat).T @ self.base_ang_vel
             elif s == "projected_gravity":
                 v = quat_to_rot(self.base_quat).T @ np.array([0.0, 0.0, -1.0])
             elif s == "imu_orientation":
@@ -348,6 +398,14 @@ class PolicyNode(Node):
                 mode = spec["mode"]
                 for j, v in zip(spec.get("joints") or self.joints, a):
                     targets_by_joint[j] = float(v)
+            elif spec["target"] == "base_twist":
+                tw = Twist()
+                tw.linear.x = float(a[0])
+                if n == 3:
+                    tw.linear.y = float(a[1]); tw.angular.z = float(a[2])
+                else:
+                    tw.angular.z = float(a[1])
+                self.pub_twist.publish(tw)
         self.last_action = raw
 
         if targets_by_joint:
