@@ -192,6 +192,40 @@ def cmd_deploy_guide(a) -> int:
     return 0
 
 
+def cmd_task_gen(a) -> int:
+    """task.json (開始条件と終了条件) → contract.json + train.json。"""
+    import json as _json
+    from .taskspec import estimate_time_s, generate
+    spec = _json.load(open(a.spec))
+    contract, train = generate(spec, os.path.dirname(os.path.abspath(a.spec)))
+    out = a.out or os.path.dirname(os.path.abspath(a.spec))
+    os.makedirs(out, exist_ok=True)
+    stem = a.name or contract["name"]
+    cpath, tpath = os.path.join(out, f"{stem}.json"), os.path.join(out, f"{stem}.train.json")
+    with open(cpath, "w") as f:
+        _json.dump(contract, f, indent=2, ensure_ascii=False); f.write("\n")
+    with open(tpath, "w") as f:
+        _json.dump(train, f, indent=2, ensure_ascii=False); f.write("\n")
+    _load(cpath, a.schema)
+    secs, why = estimate_time_s(spec)
+    print(_json.dumps({"contract": cpath, "train": tpath, "type": train["task"]["type"],
+                       "episode_steps": train["task"]["episode_steps"], "estimate_s": round(secs), "estimate_why": why},
+                      ensure_ascii=False))
+    return 0
+
+
+def cmd_task_preset(a) -> int:
+    import json as _json
+    from .taskspec import preset
+    # URDF は仕様ファイルからの相対パスで持つ (プロジェクトのフォルダごと動かせるように)
+    urdf = os.path.relpath(os.path.abspath(a.urdf), os.path.dirname(os.path.abspath(a.out)))
+    spec = preset(a.kind, urdf, a.name, a.namespace)
+    with open(a.out, "w") as f:
+        _json.dump(spec, f, indent=2, ensure_ascii=False); f.write("\n")
+    print(f"wrote {a.out}")
+    return 0
+
+
 def cmd_task_show(a) -> int:
     """Print the light-user fields of a task config (for the GUI to read back)."""
     import json as _json
@@ -324,6 +358,20 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", help="write to this file instead of stdout")
     s.add_argument("--summary", action="store_true", help="short plain-text summary for the panel instead of the Markdown guide")
     s.set_defaults(fn=cmd_deploy_guide)
+
+    s = sub.add_parser("task-gen", help="task.json (start/goal conditions) -> contract.json + train.json")
+    s.add_argument("spec")
+    s.add_argument("--out", help="output directory (default: next to the spec)")
+    s.add_argument("--name", help="file stem for the contract (default: contract name)")
+    s.add_argument("--schema")
+    s.set_defaults(fn=cmd_task_gen)
+
+    s = sub.add_parser("task-preset", help="write an example task.json (joint_target | base_target) for a URDF")
+    s.add_argument("kind", choices=["joint_target", "base_target"])
+    s.add_argument("--urdf", required=True)
+    s.add_argument("--out", required=True)
+    s.add_argument("--name"); s.add_argument("--namespace")
+    s.set_defaults(fn=cmd_task_preset)
 
     s = sub.add_parser("task-show", help="print the light-user fields of a task config as JSON")
     add_contract(s)

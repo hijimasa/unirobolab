@@ -1,0 +1,168 @@
+"""タスク仕様 (task.json): 「どこから始まって、どうなれば成功か」。GUI の ② タスク画面が書き、
+ここから契約 (contract) と学習設定 (train) を生成する。ユーザーは契約 JSON を探さないし開かない。
+
+仕様の形 (spec_version 0):
+
+    {
+      "spec_version": 0,
+      "robot": {"urdf": "servo_demo.urdf", "name": "servo_demo", "namespace": "servo_demo"},
+      "start": {"joints": "zero", "base": {"xy": [0, 0], "yaw_deg": [0, 0]}},
+      "goal": [
+        {"type": "joints_near", "range": [-1.2, 1.2], "tolerance": 0.05},
+        {"type": "base_in_region", "region": {"shape": "ring", "center": [0, 0], "r_min": 1.0, "r_max": 2.5,
+                                                "angle_deg": [-180, 180]}, "tolerance": 0.15}
+      ],
+      "episode": {"time_s": 3.0, "hold_s": 0.0},
+      "training": {"n_envs": 8, "success_target": 0.9}
+    }
+
+v1 の原始条件は joints_near (関節が目標角に; 目標は範囲から抽選) と base_in_region (基体が領域内;
+領域は ring / box / sphere) の 2 つ。既存の task.py (joint_target / base_target) にそのまま写像する。
+将来の条件 (物体が領域内、手先が点の近く) は task.py 側の条件ベース環境と一緒に足す。
+"""
+from __future__ import annotations
+
+import math
+import os
+from typing import Any
+
+from . import draft as draft_mod
+
+SPEC_VERSION = 0
+CONDITION_TYPES = ("joints_near", "base_in_region")
+
+
+class TaskSpecError(ValueError):
+    pass
+
+
+def preset(kind: str, urdf: str, name: str | None = None, namespace: str | None = None) -> dict[str, Any]:
+    """プリセット (例として置くだけ): joint_target / base_target を仕様の形で返す。"""
+    robot = {"urdf": urdf}
+    if name:
+        robot["name"] = name
+    if namespace:
+        robot["namespace"] = namespace
+    if kind == "joint_target":
+        goal = [{"type": "joints_near", "range": "auto", "tolerance": 0.05}]
+        episode = {"time_s": 2.0, "hold_s": 0.0}
+    elif kind == "base_target":
+        goal = [{"type": "base_in_region", "tolerance": 0.15,
+                 "region": {"shape": "ring", "center": [0.0, 0.0], "r_min": 1.0, "r_max": 2.5, "angle_deg": [-180.0, 180.0]}}]
+        episode = {"time_s": 10.0, "hold_s": 0.0}
+    else:
+        raise TaskSpecError(f"unknown preset {kind!r} (joint_target | base_target)")
+    return {"spec_version": SPEC_VERSION, "robot": robot,
+            "start": {"joints": "zero", "base": {"xy": [0.0, 0.0], "yaw_deg": [0.0, 0.0]}},
+            "goal": goal, "episode": episode, "training": {"n_envs": 8, "success_target": 0.9}}
+
+
+def validate(spec: dict[str, Any]) -> list[str]:
+    """人が読める問題の一覧 (空なら OK)。"""
+    problems = []
+    if spec.get("spec_version", 0) != SPEC_VERSION:
+        problems.append(f"spec_version は {SPEC_VERSION} (got {spec.get('spec_version')})")
+    if not spec.get("robot", {}).get("urdf"):
+        problems.append("robot.urdf が無い")
+    goal = spec.get("goal") or []
+    if not goal:
+        problems.append("終了条件 (goal) が 1 つも無い")
+    for i, c in enumerate(goal):
+        t = c.get("type")
+        if t not in CONDITION_TYPES:
+            problems.append(f"goal[{i}].type={t!r} は未対応 ({', '.join(CONDITION_TYPES)})")
+            continue
+        tol = c.get("tolerance")
+        if tol is None or float(tol) <= 0:
+            problems.append(f"goal[{i}].tolerance は正の数")
+        if t == "base_in_region":
+            r = c.get("region", {})
+            if r.get("shape") not in ("ring", "box", "sphere"):
+                problems.append(f"goal[{i}].region.shape は ring | box | sphere")
+    types = [c.get("type") for c in goal]
+    if len(set(types)) > 1:
+        problems.append("v1 では終了条件は 1 種類 (関節目標か基体の領域のどちらか)")
+    if float(spec.get("episode", {}).get("time_s", 0) or 0) <= 0:
+        problems.append("episode.time_s は正の数")
+    return problems
+
+
+def _joint_range(c: dict[str, Any], contract: dict[str, Any], train: dict[str, Any]) -> list[float]:
+    rng = c.get("range", "auto")
+    if rng == "auto" or rng is None:
+        return list(train["task"].get("goal_range", [-0.5, 0.5]))   # draft: 安全範囲の 80 %
+    if isinstance(rng, dict):   # 関節ごと → task.py は対称のスカラ範囲なので最小の絶対値に丸める (保守的)
+        lo = max(float(v[0]) for v in rng.values()); hi = min(float(v[1]) for v in rng.values())
+        return [round(lo, 3), round(hi, 3)]
+    return [round(float(rng[0]), 3), round(float(rng[1]), 3)]
+
+
+def _region_to_radius(region: dict[str, Any], center_xy: list[float]) -> tuple[list[float], list[float]]:
+    """領域を task.py の (goal_radius, goal_angle_deg) に写す。box/sphere は中心距離に丸める (v1)。"""
+    shape = region.get("shape", "ring")
+    if shape == "ring":
+        return ([float(region.get("r_min", 1.0)), float(region.get("r_max", 2.5))],
+                [float(a) for a in region.get("angle_deg", [-180.0, 180.0])])
+    cx, cy = region.get("center", [0.0, 0.0])
+    d = math.hypot(cx - center_xy[0], cy - center_xy[1])
+    if shape == "sphere":
+        r = float(region.get("radius", 0.5))
+        return ([max(0.1, d - r), d + r], [-180.0, 180.0])
+    size = region.get("size", [1.0, 1.0])
+    half = 0.5 * math.hypot(float(size[0]), float(size[1]))
+    return ([max(0.1, d - half), d + half], [-180.0, 180.0])
+
+
+def estimate_time_s(spec: dict[str, Any], env_steps_per_s: float = 1500.0) -> tuple[float, str]:
+    """学習時間の目安 (秒) と根拠の 1 行。経験則: servo (関節 2、±1.2 rad、許容 0.05) で 13 万ステップ、
+    許容を半分にすると約 2.5 倍、diffbot (領域到達、許容 0.15 m) で 20 万ステップ。並列数は速度に効く。"""
+    goal = spec.get("goal") or [{}]
+    c = goal[0]
+    n_envs = int(spec.get("training", {}).get("n_envs", 8))
+    if c.get("type") == "base_in_region":
+        tol = float(c.get("tolerance", 0.15))
+        steps = 200000 * (0.15 / max(tol, 1e-3)) ** 1.0
+        why = f"地点到達、許容 {tol:g} m、{n_envs} 体並列"
+    else:
+        tol = float(c.get("tolerance", 0.05))
+        steps = 130000 * (0.05 / max(tol, 1e-3)) ** 1.3
+        why = f"関節目標、許容 {tol:g} rad、{n_envs} 体並列"
+    rate = env_steps_per_s * (n_envs / 8.0) ** 0.7
+    return steps / rate, why
+
+
+def generate(spec: dict[str, Any], spec_dir: str = ".") -> tuple[dict[str, Any], dict[str, Any]]:
+    """仕様 → (契約, 学習設定)。契約の骨格は draft (URDF から) で、条件が task と早期終了を決める。"""
+    problems = validate(spec)
+    if problems:
+        raise TaskSpecError("; ".join(problems))
+    robot = spec["robot"]
+    urdf = robot["urdf"]
+    if not os.path.isabs(urdf):
+        urdf = os.path.normpath(os.path.join(spec_dir, urdf))
+    contract, train = draft_mod.draft(urdf, robot.get("name"), robot.get("namespace"), robot.get("onnx"))
+    task = train["task"]
+    es = train["train"].setdefault("early_stop", {})
+    rate = float(contract["control"]["policy_rate_hz"])
+    ep = spec.get("episode", {})
+    c = spec["goal"][0]
+    tol = float(c["tolerance"])
+    task["episode_steps"] = max(1, int(round(float(ep.get("time_s", 2.0)) * rate)))
+    if c["type"] == "joints_near":
+        if task.get("type") != "joint_target":
+            raise TaskSpecError("関節目標の条件は固定基体のロボット向け (この URDF は移動基体と判定)")
+        task["goal_range"] = _joint_range(c, contract, train)
+        es.update({"metric": "final_abs_err", "threshold": tol})
+        task["_note"] = f"task.json: joints_near, goal sampled in {task['goal_range']}, success |q-goal| <= {tol} rad"
+    else:
+        if task.get("type") != "base_target":
+            raise TaskSpecError("基体の領域の条件は移動基体のロボット向け (この URDF は固定基体と判定)")
+        start_xy = [float(v) for v in spec.get("start", {}).get("base", {}).get("xy", [0.0, 0.0])]
+        task["goal_radius"], task["goal_angle_deg"] = _region_to_radius(c.get("region", {}), start_xy)
+        task["reach_radius"] = tol
+        task["terminate_on_reach"] = float(ep.get("hold_s", 0.0)) <= 0.0 and bool(c.get("stop_at_goal", False))
+        es.update({"metric": "success_rate", "threshold": float(spec.get("training", {}).get("success_target", 0.9))})
+        task["_note"] = f"task.json: base_in_region {c.get('region', {}).get('shape')}, success within {tol} m"
+    train["n_envs"] = int(spec.get("training", {}).get("n_envs", 8))
+    contract["_task_spec"] = {"spec_version": SPEC_VERSION, "goal": spec["goal"], "episode": ep}
+    return contract, train
