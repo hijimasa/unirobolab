@@ -167,7 +167,8 @@ def run(c: Contract, entity: str, onnx_path: str, host: str, port: int, goal: li
                 log.write(json.dumps({"t": round(now - t0, 4), "obs": obs.tolist(), "action": act.tolist()}) + "\n")
             if now - last_status >= 1.0:
                 print(json.dumps({"t": round(now - t0, 1), "rate_hz": ticks / (now - last_status),
-                                  "err": lp.error_to_goal(), "goal": lp.goal.tolist()}), flush=True)
+                                  "err": lp.error_to_goal(), "goal": lp.goal.tolist(),
+                                  "base": bool(lp.c.obs_terms_by_source("base_goal_xy"))}), flush=True)
                 ticks = 0; last_status = now
     finally:
         stop.set()

@@ -159,6 +159,38 @@ def cmd_train_status(a) -> int:
     return 0
 
 
+def cmd_ros_set(a) -> int:
+    import json as _json
+    from .deploy import ros_set
+    raw = _json.load(open(a.contract))
+    ros_set(raw, a.namespace, a.command_mode, a.controller, a.joint_states_topic, a.command_topic, a.estop_topic)
+    tmp = a.contract + ".tmp"
+    with open(tmp, "w") as f:
+        _json.dump(raw, f, indent=2, ensure_ascii=False); f.write("\n")
+    try:
+        _load(tmp, a.schema)      # validate before replacing the contract
+    except Exception:
+        os.remove(tmp)
+        raise
+    os.replace(tmp, a.contract)
+    print(f"updated {a.contract}: ros={_json.dumps(raw.get('ros'), ensure_ascii=False)} estop={raw.get('safety', {}).get('estop_topic')}")
+    return 0
+
+
+def cmd_deploy_guide(a) -> int:
+    import json as _json
+    from .deploy import deploy_guide
+    text = deploy_guide(_json.load(open(a.contract)), a.package, a.lang)
+    if a.out:
+        os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+        with open(a.out, "w") as f:
+            f.write(text)
+        print(f"wrote {a.out}")
+    else:
+        print(text)
+    return 0
+
+
 def cmd_task_show(a) -> int:
     """Print the light-user fields of a task config (for the GUI to read back)."""
     import json as _json
@@ -272,6 +304,20 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--lang", default="ja", choices=["ja", "en"])
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_train_status)
+
+    s = sub.add_parser("ros-set", help="edit the contract's ros section (namespace, command mode, controller, topics, e-stop)")
+    add_contract(s)
+    s.add_argument("--namespace"); s.add_argument("--command-mode", choices=["joint_state_topic", "ros2_control_commands"])
+    s.add_argument("--controller"); s.add_argument("--joint-states-topic"); s.add_argument("--command-topic")
+    s.add_argument("--estop-topic")
+    s.set_defaults(fn=cmd_ros_set)
+
+    s = sub.add_parser("deploy-guide", help="plain-language procedure for the real robot (Markdown)")
+    s.add_argument("contract")
+    s.add_argument("--package", help="generated package name (default <name>_policy)")
+    s.add_argument("--lang", default="ja", choices=["ja", "en"])
+    s.add_argument("--out", help="write to this file instead of stdout")
+    s.set_defaults(fn=cmd_deploy_guide)
 
     s = sub.add_parser("task-show", help="print the light-user fields of a task config as JSON")
     add_contract(s)

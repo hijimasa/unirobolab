@@ -757,3 +757,19 @@ BuildLinuxPlayer で作ったプレイヤーを使っていた。これは「汎
   誤差が変わらず目標の 1.5 倍以上 → 許容誤差を広げる / 制限時間を延ばす。
 - テスト: python/tests/test_status.py。画面: docs/images/gui_task_training.png (学習中の Task タブ)。
   SIM_GUI_SCREENSHOT_DELAY で撮影までの秒数を変えられる。
+
+## 24. ライトユーザー動線 ⑤: 3D で試す、実機へ(2026-09-16)
+
+- 試す (Policy パネル): ライブ実行器の状態行に `base` (地点到達か) を足し、パネルは目標の要素数と
+  base から、地点到達なら 3D マーカ (Unity の (x, z) ↔ ROS の (−y, x)) と軌跡 (LineRenderer、0.1 s ごと)、
+  関節目標なら関節ごとのスライダ (範囲は Task タブの目標範囲) を出す。地面のクリック
+  (Physics.Raycast、無ければ y=0 平面) で目標を置き、実行中なら stdin の `goal x y` で送る。
+  Run は契約と ONNX が空なら Task タブの契約と直近の学習出力 (LabPanel.LastRunDir/policy.onnx) を使う。
+  実行器の既定コマンドは `<unirobolab.python> -m unirobolab live`。
+- 実機へ (Deploy タブ): `unirobolab ros-set <契約> [--namespace] [--command-mode] [--controller]
+  [--joint-states-topic] [--command-topic] [--estop-topic]` が契約の ros 節と safety.estop_topic を
+  書き換える (一時ファイルに書いて検証してから置き換える。ros2_control でコントローラ名が無ければ
+  gen と同じ既定名)。`unirobolab deploy-guide <契約> [--package] [--lang] [--out]` が手順書
+  (Markdown) を作る。タブは ros-set → gen --overwrite → deploy-guide --out <pkg>/DEPLOY.md の順に
+  走らせ、`SIM_DEPLOY_AUTORUN="契約|出力|名前空間|指令方式"` でヘッドレスに通せる。
+- テスト: python/tests/test_deploy.py (ros-set の編集と既定、手順書の内容: トピック、上限、起動)。
