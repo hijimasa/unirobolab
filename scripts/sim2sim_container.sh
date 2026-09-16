@@ -31,6 +31,9 @@ case "$action" in
       -e XAUTHORITY=/.Xauthority -e DISPLAY="${DISPLAY:-:1}" -e QT_X11_NO_MITSHM=1 \
       -v /run/dbus/system_bus_socket:/run/dbus/system_bus_socket \
       --name "$name" "$image" -c "sleep infinity"
+    # The GUI's check (phase 5) passes host paths: make them valid inside the container too
+    # (the simulator on the host opens the spawn URDF by that path).
+    docker exec -u root "$name" sh -c "mkdir -p '$(dirname "$here")' && ln -sfn /home/unity/unirobolab '$here'" 2>/dev/null || true
     echo "started $name"
     ;;
   stop)  docker stop "$name" ;;

@@ -795,5 +795,13 @@ Project(プロジェクトと失効)+ Env(環境検出)+ TaskSpec(task.json の�
   旧 LabPanel の SIM_*_AUTORUN は廃止。画面: docs/images/wizard/w1_robot 〜 w6_deploy.png。
 - 通し検証(servo_demo): ① URDF 読込 → ② 生成 → ③ 学習(早期終了、成功率 56%、誤差 0.050)→ ④ ライブ
   (誤差 0.002 rad)→ ⑤ report 読込(合格)→ ⑥ パッケージ + DEPLOY.md。
-- 未実装(v2.1 の残り): ⑤ の GUI 完結(GUI のシミュレータ自身を被検体にする実行モデル)、②の 3D での
-  開始条件編集と関節目標の可視化、① の項リスト/JSON 同期、外部処理の常駐化、初回セットアップ画面。
+- ⑤ の GUI 完結(2026-09-17): 被検体は GUI のシミュレータ自身。`scripts/check_runner.sh` が ROS 2 側の手順
+  (gen → colcon build → endpoint と set_sim_state と spawn_entity → scenario-default → sim2sim)を
+  "##STEP n/5" の進捗行つきで実行し、GUI はホストに ROS 2 があれば直接、無ければコンテナに
+  `docker exec` で回す。コンテナにはホストと同じパスでリポジトリのリンクを張る(sim2sim_container.sh start)
+  ので、パスの読み替えは無い(スポーンの URDF はホスト側のシミュレータが開くため、ホストのパスが要る)。
+  既定シナリオ(`unirobolab scenario-default`、scenario.py)は目標 3 点 + 非常停止の試験。チェック中は
+  時間倍率 1、学習・試すで置いたロボットは消してからスポーンする。servo_demo で合格(誤差 0.044 rad、
+  非常停止 ok)。画面: docs/images/wizard/w5_check.png。
+- 未実装(v2.1 の残り): ② の 3D での開始条件編集と関節目標の可視化、① の項リスト/JSON 同期、
+  外部処理の常駐化、初回セットアップ画面、⑤ をホストの ROS 2 で回す場合の simulation_ros2_utils の配布。

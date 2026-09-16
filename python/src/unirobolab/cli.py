@@ -230,6 +230,17 @@ def cmd_task_preset(a) -> int:
     return 0
 
 
+def cmd_scenario_default(a) -> int:
+    import json as _json
+    from .scenario import default_scenario
+    spec = _json.load(open(a.task)) if a.task else None
+    sc = default_scenario(_json.load(open(a.contract)), spec)
+    with open(a.out, "w") as f:
+        _json.dump(sc, f, indent=2); f.write("\n")
+    print(f"wrote {a.out}: {sc['_note']}")
+    return 0
+
+
 def cmd_task_show(a) -> int:
     """Print the light-user fields of a task config (for the GUI to read back)."""
     import json as _json
@@ -381,6 +392,10 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", required=True)
     s.add_argument("--name"); s.add_argument("--namespace")
     s.set_defaults(fn=cmd_task_preset)
+
+    s = sub.add_parser("scenario-default", help="write the default sim2sim scenario (goals + e-stop test) for a contract")
+    s.add_argument("contract"); s.add_argument("--task", help="task.json to derive goals and tolerance from"); s.add_argument("--out", required=True)
+    s.set_defaults(fn=cmd_scenario_default)
 
     s = sub.add_parser("task-show", help="print the light-user fields of a task config as JSON")
     add_contract(s)
