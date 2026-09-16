@@ -615,3 +615,20 @@ sim2sim のシナリオに `estop_test`(追加の保持中に非常停止を入�
 検証: servo_demo_rl(safety: 観測 150 ms、関節 ±1.5 rad、速度 6 rad/s、ランプイン 0.5 s)の sim2sim は
 追従に影響なく PASS、非常停止テストも PASS(停止中と報告、停止中の行動配信 0、解除後に再開)。
 diffbot_rl(車輪 12 rad/s、停止時ゼロ)も PASS(0.02 / 0.11 / 0.09 m)。
+
+## 17. 優先順位 5: 配布(2026-09-16)
+
+- `scripts/setup_python.sh`: uv で `.venv` を作り `python/` を runtime extras 付きで入れる
+  (`--training` で sb3 + CPU torch)。uv が無ければ公式インストーラで入れる。表示される
+  インタプリタのパスを本体の `settings.policy_runner_command` に書けば、Policy パネルから
+  そのまま使える。`python/uv.lock` で依存を固定。
+- 本体側は、ブランチ base-state → learning-pool → live-policy を main にマージし、
+  BuildLinuxPlayer でプレイヤーを作ってリリースに載せる(利用者は学習サーバ入りの
+  リリース版を使う)。派生 Docker イメージ(`docker/Dockerfile`)は開発用のまま。
+- 未確認: Windows / macOS(パスの引用と `/bin/sh` 依存が Policy パネルにある)、ROS 2 Humble。
+
+### 利用者の流れ(想定)
+1. 本体のリリース版を展開し、`simulation_resources.json` に `learning_port` と `policy_runner_command` を書く
+2. `scripts/setup_python.sh` で Python 側を用意
+3. 学習: コンテナで `unirobolab train`、または Isaac Lab で学習して `import-isaaclab`
+4. Policy パネルか `unirobolab live` で動かして確認 → `gen` → コンテナで `sim2sim` → 実機へ

@@ -21,6 +21,17 @@ trained in, and proving it in simulation before touching hardware.
   units, scaling and control rate come from one *policy contract* shared
   with the training environment.
 
+## Install (Python side)
+
+```bash
+scripts/setup_python.sh              # uv venv at .venv with the runtime extras (gen, import, live)
+scripts/setup_python.sh --training   # + stable-baselines3 and CPU torch for `unirobolab train`
+```
+
+The script installs uv if needed and prints the interpreter path for the simulator's
+`settings.policy_runner_command`. Training and sim2sim against the simulator use the
+container from `scripts/sim2sim_container.sh` (ROS 2 Jazzy). Linux only so far.
+
 ## Quick start (servo demo, wiring-check policy)
 
 ```bash

@@ -20,6 +20,17 @@ Genesis が既に担っています。UniRoboLab が対象にするのはそれ�
 - 生成される ROS 2 パッケージ(C++ ノード + ONNX Runtime)。関節順・単位・スケール・
   制御周期は学習環境と共有する *ポリシー契約* から生成される。
 
+## インストール(Python 側)
+
+```bash
+scripts/setup_python.sh              # uv で .venv を作り runtime extras を入れる (gen, import, live)
+scripts/setup_python.sh --training   # + stable-baselines3 と CPU 版 torch (`unirobolab train`)
+```
+
+uv が無ければ入れる。シミュレータの `settings.policy_runner_command` に書くインタプリタのパスを表示する。
+シミュレータ相手の学習と sim2sim は `scripts/sim2sim_container.sh` のコンテナ(ROS 2 Jazzy)で行う。
+Linux のみ確認済み。
+
 ## クイックスタート(servo_demo、配線確認ポリシー)
 
 ```bash

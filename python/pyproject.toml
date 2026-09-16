@@ -15,7 +15,9 @@ dependencies = [
 # onnxruntime is needed to run a policy (the generated ROS 2 node and make-test-policy's
 # self-check). It is a separate extra so a machine that only generates packages
 # does not need it.
-runtime = ["onnxruntime>=1.16"]
+runtime = ["onnxruntime>=1.16", "jsonschema>=4.0"]
+# training on a machine without the simulator container: CPU torch + stable-baselines3
+training = ["gymnasium>=1.0", "stable-baselines3>=2.3", "torch>=2.2", "matplotlib>=3.7"]
 dev = ["onnxruntime>=1.16", "jsonschema>=4.0", "pytest>=7"]
 
 [project.scripts]
