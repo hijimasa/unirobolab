@@ -68,7 +68,8 @@ from an Isaac Lab run's `env.yaml` (per-element scale/offset, Twist commands, IM
 odometry inputs, cmd_vel outputs are all in the contract now), and sim2sim scenarios can
 inject disturbances and random goals. A first GUI piece exists: the simulator's Policy panel runs a contract + ONNX pair on a
 spawned robot without ROS (it launches `unirobolab live`, which talks to the learning
-server). The rest of the GUI is still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
+server). A tabbed UniRoboLab panel adds a contract editor with validation, training start/stop with a live
+learning curve, and a sim2sim report viewer. Visual polish is still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
 the design, milestones and results.
 
 ## Layout

@@ -632,3 +632,22 @@ diffbot_rl(車輪 12 rad/s、停止時ゼロ)も PASS(0.02 / 0.11 / 0.09 m)。
 2. `scripts/setup_python.sh` で Python 側を用意
 3. 学習: コンテナで `unirobolab train`、または Isaac Lab で学習して `import-isaaclab`
 4. Policy パネルか `unirobolab live` で動かして確認 → `gen` → コンテナで `sim2sim` → 実機へ
+
+## 18. GUI の残り(最小構成、2026-09-16)
+
+本体に UniRoboLab パネル(`Assets/Scripts/LabPanel.cs`、ブランチ gui-panels)を足した。
+Policy パネルと同じく実行時生成の uGUI で、外部処理は `settings.unirobolab_python`
+(既定 `python3`)の `-m unirobolab ...` を子プロセス(`ExternalProcess.cs`)で回す。
+
+| タブ | 機能 |
+|---|---|
+| Contract | 契約 JSON のパスを指定して Load / Save、Validate は `unirobolab show` の出力(配置表かエラー)を表示 |
+| Train | 契約・学習設定・スポーンする URDF・体数・出力先を指定して Start(`unirobolab train --transport direct --spawn-urdf`)。進行行を表示し、`progress.csv` から 2 秒ごとに学習曲線(最終誤差と収益)を描く。Stop で終了 |
+| Check | sim2sim の `report.json` を読んで各チェックの ok / FAIL と理由を表示。`settings.sim2sim_command` があれば Run で実行して結果を読み込む(ROS 2 環境が要るのでコンテナ内向け) |
+
+ヘッドレス検証用に `SIM_TRAIN_AUTORUN="契約|学習設定|URDF|体数|出力"`。GUI の画面確認は
+ウィンドウ表示できる環境で。見た目は素の uGUI で、最小限の操作性に絞った。
+
+検証(ヘッドレス、本体ブランチ gui-panels): `SIM_TRAIN_AUTORUN` でシミュレータ自身が
+`unirobolab train` を起動し、servo_demo 8 台を自動スポーンして 12k ステップを 8 s で学習、
+曲線データを 4 回更新、`policy.onnx` を出力。

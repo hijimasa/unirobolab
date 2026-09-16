@@ -58,7 +58,8 @@ ROS 2 なしに行える。複数シミュレータプロセスのプールも�
 [docs/unity6-gpu-physics-survey.md](docs/unity6-gpu-physics-survey.md)。外部で学習した方策の取り込みは `unirobolab import-isaaclab`(Isaac Lab の `env.yaml` から契約を生成。
 要素ごとの scale/offset、Twist 指令、IMU・オドメトリ入力、cmd_vel 出力を契約で表せる)。
 sim2sim のシナリオは外乱注入とランダム目標に対応。GUI の最初の部品として、本体の Policy パネルから契約 + ONNX をスポーン済みロボットで ROS なしに
-動かせる(`unirobolab live` を起動して学習サーバ経由で回す)。残りの GUI はこれから。
+動かせる(`unirobolab live` を起動して学習サーバ経由で回す)。タブ式の UniRoboLab パネルで、契約の編集と検証、学習の開始・停止と学習曲線、sim2sim の結果表示が
+できる。見た目の整備はこれから。
 設計・マイルストーン・結果は [docs/architecture.md](docs/architecture.md) を参照。
 
 ## 構成
