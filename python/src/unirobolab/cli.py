@@ -86,6 +86,28 @@ def cmd_import_isaaclab(a) -> int:
     return 0
 
 
+def cmd_draft(a) -> int:
+    import json as _json
+    from unirobolab import draft as draft_mod
+    try:
+        contract, train = draft_mod.draft(a.urdf, name=a.name, namespace=a.namespace, onnx=a.onnx)
+    except draft_mod.DraftError as e:
+        print(f"cannot draft: {e}", file=sys.stderr)
+        return 2
+    contract_mod.from_dict(contract, a.out)  # layout check
+    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+    with open(a.out, "w", encoding="utf-8") as f:
+        _json.dump(contract, f, indent=2, ensure_ascii=False); f.write("\n")
+    train_path = a.train_out or os.path.splitext(a.out)[0] + ".train.json"
+    with open(train_path, "w", encoding="utf-8") as f:
+        _json.dump(train, f, indent=2, ensure_ascii=False); f.write("\n")
+    print(f"wrote {a.out} and {train_path}")
+    for n in contract["_notes"]:
+        print("  " + n)
+    print(contract_mod.describe(contract_mod.load(a.out)))
+    return 0
+
+
 def cmd_live(a) -> int:
     from unirobolab.direct import live
     c = _load(a.contract, a.schema)
@@ -149,6 +171,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--asset", default="robot")
     s.add_argument("--action", help="action term name (default: the first)")
     s.set_defaults(fn=cmd_import_isaaclab)
+
+    s = sub.add_parser("draft-contract", help="draft a contract and a task config from a robot's URDF")
+    s.add_argument("urdf")
+    s.add_argument("--out", required=True, help="contract JSON to write (task config goes next to it as *.train.json)")
+    s.add_argument("--train-out", help="task/train config path (default <out>.train.json)")
+    s.add_argument("--name"); s.add_argument("--namespace", help="ROS namespace (default: from the ros2_control topics)")
+    s.add_argument("--onnx", help="policy path to record in the contract")
+    s.set_defaults(fn=cmd_draft)
 
     s = sub.add_parser("live", help="run a policy in real time through the simulator's learning server (no ROS)")
     add_contract(s)

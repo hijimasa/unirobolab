@@ -651,3 +651,27 @@ Policy パネルと同じく実行時生成の uGUI で、外部処理は `setti
 検証(ヘッドレス、本体ブランチ gui-panels): `SIM_TRAIN_AUTORUN` でシミュレータ自身が
 `unirobolab train` を起動し、servo_demo 8 台を自動スポーンして 12k ステップを 8 s で学習、
 曲線データを 4 回更新、`policy.onnx` を出力。
+
+## 19. ライトユーザー動線 ①: URDF から契約とタスクの草案を作る(2026-09-16)
+
+`unirobolab draft-contract <urdf> --out contract.json`(`python/src/unirobolab/draft.py`)。
+Contract タブの「Draft from URDF」が同じものを呼んでエディタに読み込む。
+
+読むもの: 可動関節(URDF の順)と `<limit>`、`<ros2_control>` の指令インターフェース
+(関節ごとに position > velocity > effort の順で採用)とハードウェアの param
+(`joint_states_topic` から名前空間、`ground_truth_topic`)、基体が `world` に固定かどうか。
+
+決めるもの:
+- 固定基体 → 関節目標テンプレート(25 Hz、観測 q/qd/goal/prev_a、行動は位置で
+  scale = 可動範囲の半分 × 0.9、offset = 中心、目標範囲は安全範囲の 80 %、早期終了は最終誤差 0.05 rad)。
+- 移動基体 → 地点到達テンプレート(10 Hz、基体速度・目標・車輪速度、行動は速度で URDF の
+  velocity 上限(最大 10 rad/s)、留まる学習、観測ノイズ、早期終了は成功率 90 %)。
+- safety: 可動範囲の 90 % を `joint_limits`、`<limit velocity>` を `max_joint_speed`、
+  効力制御なら `<limit effort>` を `max_joint_effort`、速度・効力制御は停止時ゼロ。
+- `_notes` に判断の根拠(固定/移動、指令方式)を書き、関節ごとに指令方式が混在する場合は注記する。
+
+テスト: `python/tests/test_draft.py`(servo_demo → 固定・位置・joint_target、diffbot → 移動・速度・base_target)。
+
+検証(草案をそのまま使う): servo_demo の URDF から草案を作り、その契約と学習設定で 8 体を学習
+(早期終了 134k ステップ、83 s、評価 0.021 rad)、ライブ実行で目標 (0.8, −0.8) に 0.084 rad。
+手で書いた契約と同じ流れが、URDF を指定するだけで通る。

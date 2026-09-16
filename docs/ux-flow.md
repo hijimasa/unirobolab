@@ -23,7 +23,7 @@
 - 隠す: 契約の観測ベクトル、スケール、履歴。**契約の草案はここで自動生成する**
   (関節順は URDF の順、ros2_control の指令インターフェースから mode、可動範囲から
   `safety.joint_limits`、速度制限から `max_joint_speed`)。
-- 未実装: 契約の自動生成、ros2_control タグからの読み取り。
+- 実装: `unirobolab draft-contract` と Contract タブの「Draft from URDF」(19 章)。関節順・可動範囲・指令方式・トピック名・固定/移動を URDF から読む。
 
 ### 2. 何をさせるか決める
 - 操作: テンプレートから選ぶ。「関節を目標角へ動かす」「地点へ移動する」(将来: 「経路を追従する」)。
