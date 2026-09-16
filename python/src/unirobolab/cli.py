@@ -150,6 +150,15 @@ def cmd_explain_report(a) -> int:
     return 0 if ex["pass"] else 1
 
 
+def cmd_train_status(a) -> int:
+    """status.json を平易な 1〜2 行にする (GUI とターミナル用)。"""
+    import json as _json
+    from .status import format_text
+    st = _json.load(open(a.status))
+    print(_json.dumps(st, ensure_ascii=False) if a.json else format_text(st, a.lang))
+    return 0
+
+
 def cmd_task_show(a) -> int:
     """Print the light-user fields of a task config (for the GUI to read back)."""
     import json as _json
@@ -257,6 +266,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--lang", default="ja", choices=["ja", "en"])
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_explain_report)
+
+    s = sub.add_parser("train-status", help="plain-language training progress from a run's status.json")
+    s.add_argument("status")
+    s.add_argument("--lang", default="ja", choices=["ja", "en"])
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_train_status)
 
     s = sub.add_parser("task-show", help="print the light-user fields of a task config as JSON")
     add_contract(s)

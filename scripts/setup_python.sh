@@ -8,7 +8,7 @@
 # make-test-policy / live` work. --training adds stable-baselines3 and CPU torch for
 # `unirobolab train` (the simulator container already has them). Installs uv into
 # ~/.local/bin if it is missing (https://astral.sh/uv). Prints the interpreter path to
-# put into the simulator's settings.policy_runner_command.
+# put into the unirobolab.policy_runner_command entry of simulation_resources.json.
 set -e
 here=$(cd "$(dirname "$0")/.." && pwd)
 venv="$here/.venv"

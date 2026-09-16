@@ -57,10 +57,14 @@ def load_config(path: str) -> tuple[dict[str, Any], dict[str, Any]]:
 class _EpisodeLogger:
     """SB3 callback: one CSV row per finished episode (any env), with per-term reward sums."""
 
-    def __init__(self, path: str, weights: dict[str, float], n_envs: int):
+    def __init__(self, path: str, weights: dict[str, float], n_envs: int,
+                 status_path: str | None = None, status_ctx: dict | None = None):
         from stable_baselines3.common.callbacks import BaseCallback
 
         outer = self
+        self.status_path = status_path
+        self.status_ctx = status_ctx or {}
+        self._status_t = 0.0
 
         class CB(BaseCallback):
             def __init__(self):
@@ -94,6 +98,10 @@ class _EpisodeLogger:
                                   f"return={self.ret[i]:8.3f} final|err|={info['abs_err']:.4f} "
                                   f"({row['wall_s']:.0f}s)", flush=True)
                         self.ret[i], self.len[i] = 0.0, 0
+                now = time.monotonic()
+                if outer.status_path and now - outer._status_t >= 1.0:
+                    outer._status_t = now
+                    outer.write_status("training", now - self.t0)
                 return True
 
         self.rows: list[dict] = []
@@ -102,6 +110,22 @@ class _EpisodeLogger:
                                                          "final_abs_err", "success"] + [f"term_{k}" for k in weights])
         self.writer.writeheader()
         self.callback = CB()
+
+    def write_status(self, phase: str, wall_s: float, extra: dict | None = None) -> None:
+        """ライトユーザー向けの進捗 (status.json)。GUI が 1 秒ごとに読む。"""
+        if not self.status_path:
+            return
+        from unirobolab.status import train_status
+        ctx = self.status_ctx
+        st = train_status(self.rows, ctx.get("total_timesteps", 0), ctx.get("n_envs", 1), wall_s,
+                          tolerance=ctx.get("tolerance"), window=ctx.get("window", 200),
+                          early_stop=ctx.get("early_stop"), phase=phase)
+        if extra:
+            st.update(extra)
+        tmp = self.status_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(st, f)
+        os.replace(tmp, self.status_path)
 
     def close(self):
         self.f.close()
@@ -273,7 +297,18 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
     print(f"env ({transport}, {n_envs} envs): obs {env.observation_space.shape} act {env.action_space.shape}, "
           f"{task.get('physics_steps_per_action', 1)} physics steps/action, "
           f"{task.get('episode_steps', 100)} steps/episode, reward {weights}", flush=True)
-    logger = _EpisodeLogger(os.path.join(out_dir, "progress.csv"), weights, n_envs)
+    # 成功の定義 (status.json 用): 関節目標は early_stop の final_abs_err 閾値、地点到達は reach_radius
+    es = train.get("early_stop") or {}
+    tolerance = None
+    if task.get("type", "joint_target") == "base_target":
+        tolerance = float(task.get("reach_radius", 0.15))
+    elif es.get("metric") == "final_abs_err":
+        tolerance = float(es["threshold"])
+    logger = _EpisodeLogger(os.path.join(out_dir, "progress.csv"), weights, n_envs,
+                            status_path=os.path.join(out_dir, "status.json"),
+                            status_ctx={"total_timesteps": int(train["total_timesteps"]), "n_envs": n_envs,
+                                        "tolerance": tolerance, "window": int(es.get("window", 200)) if es else 200,
+                                        "early_stop": es or None})
     callbacks = [logger.callback]
     early = None
     if train.get("early_stop"):
@@ -297,6 +332,7 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
     steps_done = int(model.num_timesteps)
     print(f"trained {steps_done} steps in {wall:.0f}s ({steps_done/wall:.1f} env steps/s)"
           + (" [early stop]" if stopped_early else ""), flush=True)
+    logger.write_status("evaluating", wall, {"stopped_early": stopped_early})
 
     model.save(os.path.join(out_dir, "model.zip"))
     onnx_path = os.path.join(out_dir, "policy.onnx")
@@ -308,5 +344,7 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
         json.dump(ev, f, indent=2)
     print(f"eval: mean final |err| {ev['mean_final_abs_err']:.4f} rad, settled {ev['mean_settled_abs_err']:.4f} rad")
     print(f"wrote {onnx_path}")
+    logger.write_status("done", wall, {"stopped_early": stopped_early, "eval_final_abs_err": ev["mean_final_abs_err"],
+                                       "onnx": onnx_path})
     env.close()
     return 0
