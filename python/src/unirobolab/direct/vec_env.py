@@ -19,7 +19,7 @@ from unirobolab.contract import Contract
 from unirobolab.direct.client import LearningClient, LearningServerError
 from unirobolab.geometry import projected_gravity, quat_to_rot, world_to_body
 from unirobolab.obs_math import process_action_term, process_obs_term
-from unirobolab.task import Task
+from unirobolab.task import make_task
 
 
 class DirectVecEnv(VecEnv):
@@ -50,7 +50,7 @@ class DirectVecEnv(VecEnv):
             self.act_joints = [dd["left_joint"], dd["right_joint"]]
         else:
             raise ValueError("contract needs a joints or base_twist action term")
-        self.task = Task(task_cfg, self.cmd_term.size if self.cmd_term else 2)
+        self.task = make_task(task_cfg, self.cmd_term.size if self.cmd_term else 2, list(self.act_joints))
         if self.task.type == "joint_target" and self.cmd_term is None:
             raise ValueError("joint_target task needs a 'command' observation term")
         if self.task.type == "base_target" and not c.obs_terms_by_source("base_goal_xy"):
@@ -111,6 +111,9 @@ class DirectVecEnv(VecEnv):
             raise ValueError(f"obs_noise names unknown terms {unknown}")
         self.spawn_xy = np.zeros((n, 2), np.float32)
         self.prev_dist = np.zeros(n, np.float32)
+        # conditions タスク: 条件ごとの目標 (kind → 配列) と直前の誤差
+        self.cgoals: list[dict[str, np.ndarray]] = [{} for _ in range(n)]
+        self.prev_errs: list[list[float]] = [[] for _ in range(n)]
         self.last_action = np.zeros((n, c.action_dim), np.float32)
         self.frames: list[list[np.ndarray]] = [[] for _ in range(n)]
         self.t = np.zeros(n, int)
@@ -129,8 +132,18 @@ class DirectVecEnv(VecEnv):
         js = spec.get("joints")
         return full if not js else full[[self.c.joints.index(j) for j in js]]
 
+    def _q_by_name(self, i: int) -> dict[str, float]:
+        st = self.states[i]
+        return {n: float(p) for n, p in zip(st.names, st.position)}
+
+    def _cond_goal(self, i: int, kind: str, size: int) -> np.ndarray:
+        g = self.cgoals[i].get(kind)
+        return g if g is not None else np.zeros(size, np.float32)
+
     def _frame(self, i: int) -> np.ndarray:
+        from unirobolab.fk import fk_point
         frame = np.zeros(self.c.obs_dim, np.float32)
+        conds = self.task.type == "conditions"
         for t in self.c.observations:
             s = t.source
             if s == "joint_position":
@@ -140,7 +153,11 @@ class DirectVecEnv(VecEnv):
             elif s == "joint_effort":
                 v = self._select(self._joint(i, "effort"), t.spec)
             elif s == "command":
-                v = self.goal[i]
+                v = self._cond_goal(i, "joints_near", t.size) if conds else self.goal[i]
+            elif s == "link_position":
+                v = fk_point(t.spec["chain"], self._q_by_name(i), t.spec.get("point"))
+            elif s == "link_goal":
+                v = self._cond_goal(i, "link_near", 3) - fk_point(t.spec["chain"], self._q_by_name(i), t.spec.get("point"))
             elif s == "last_action":
                 v = self.last_action[i]
             elif s == "base_lin_vel":
@@ -174,14 +191,23 @@ class DirectVecEnv(VecEnv):
 
     def _goal_body_xy(self, i: int) -> np.ndarray:
         st = self.states[i]
-        d = np.array([self.goal[i][0] - st.base_pos[0], self.goal[i][1] - st.base_pos[1], 0.0])
+        g = self._cond_goal(i, "base_in_region", 2) if self.task.type == "conditions" else self.goal[i]
+        d = np.array([g[0] - st.base_pos[0], g[1] - st.base_pos[1], 0.0])
         return (quat_to_rot(st.base_quat).T @ d)[:2]
+
+    def _cond_errs(self, i: int) -> list[float]:
+        qmap = self._q_by_name(i); q = self._q(i); st = self.states[i]
+        return [c.error(self.cgoals[i][c.kind], qmap, q, st.base_pos) for c in self.task.conditions]
 
     def _dist(self, i: int) -> float:
         return float(np.linalg.norm(self.goal[i][:2] - self.states[i].base_pos[:2]))
 
     def _begin_episode(self, i: int) -> None:
-        if self.task.type == "joint_target":
+        if self.task.type == "conditions":
+            self.spawn_xy[i] = self.states[i].base_pos[:2]
+            self.cgoals[i] = {c.kind: c.sample(self.rng, self.spawn_xy[i]) for c in self.task.conditions}
+            self.prev_errs[i] = self._cond_errs(i)
+        elif self.task.type == "joint_target":
             self.goal[i] = self.task.sample_joint_goal(self.rng)
         else:
             self.spawn_xy[i] = self.states[i].base_pos[:2]
@@ -243,7 +269,14 @@ class DirectVecEnv(VecEnv):
             q = self._q(i)
             qd = (q - self.last_q[i]) / dt
             self.last_q[i] = q
-            if self.task.type == "joint_target":
+            if self.task.type == "conditions":
+                errs = self._cond_errs(i)
+                r, contrib, reached = self.task.reward(errs, self.prev_errs[i], qd, self.last_action[i], prev_actions[i])
+                self.prev_errs[i] = errs
+                info = {"goal": np.concatenate([np.asarray(self.cgoals[i][c.kind]).ravel() for c in self.task.conditions]),
+                        "q": q.copy(), "abs_err": float(max(errs)), "errs": list(errs),
+                        "cond_ok": all(e <= c.tolerance for e, c in zip(errs, self.task.conditions))}
+            elif self.task.type == "joint_target":
                 goal = self.goal[i][: len(self.act_joints)]
                 r, contrib, reached = self.task.reward_joint(q, goal, qd, self.last_action[i], prev_actions[i])
                 info = {"goal": goal.copy(), "q": q.copy(), "abs_err": float(np.mean(np.abs(q - goal)))}
@@ -264,7 +297,8 @@ class DirectVecEnv(VecEnv):
                     info["TimeLimit.truncated"] = True
                 # success: terminated at the goal, or (without termination) ended inside the radius
                 info["success"] = bool(reached) or (self.task.type == "base_target"
-                                                    and info["abs_err"] <= self.task.reach_radius)
+                                                    and info["abs_err"] <= self.task.reach_radius) \
+                    or (self.task.type == "conditions" and bool(info.get("cond_ok")))
                 info["episode_terms"] = dict(self.episode_terms[i])
                 info["terminal_observation"] = self._obs(i)
                 to_reset.append(i)

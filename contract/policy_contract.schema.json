@@ -284,9 +284,27 @@
             "last_action",
             "command",
             "custom",
-            "base_goal_xy"
+            "base_goal_xy",
+            "link_position",
+            "link_goal"
           ],
-          "description": "base_* / projected_gravity / imu_orientation are in the body frame (ROS axes). base_goal_xy (size 2) is the task goal on the ground expressed in the body frame; the deployed node builds it from the goal topic (world x, y) and the robot pose."
+          "description": "base_* / projected_gravity / imu_orientation are in the body frame (ROS axes). base_goal_xy (size 2) is the task goal on the ground expressed in the body frame; the deployed node builds it from the goal topic (world x, y) and the robot pose. link_position (size 3) is a point of a link in the robot's root-link frame from forward kinematics of joint_states (chain, point); link_goal (size 3) is the goal point (root-link frame, from the goal topic) minus that link point."
+        },
+        "link": {
+          "type": "string",
+          "description": "link_position / link_goal: the link whose point is tracked."
+        },
+        "point": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "link_position / link_goal: the point in the link frame (default: the link origin)."
+        },
+        "chain": {
+          "type": "array",
+          "description": "link_position / link_goal: forward-kinematics steps from the root link to the link (from the URDF: xyz, rpy, and for movable steps joint, axis, type).",
+          "items": { "type": "object" }
         },
         "joints": {
           "type": "array",

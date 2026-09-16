@@ -387,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=lambda a: (print(__import__("json").dumps(__import__("unirobolab.draft", fromlist=["robot_info"]).robot_info(a.urdf))), 0)[1])
 
     s = sub.add_parser("task-preset", help="write an example task.json (joint_target | base_target) for a URDF")
-    s.add_argument("kind", choices=["joint_target", "base_target"])
+    s.add_argument("kind", choices=["joint_target", "link_target", "base_target"])
     s.add_argument("--urdf", required=True)
     s.add_argument("--out", required=True)
     s.add_argument("--name"); s.add_argument("--namespace")

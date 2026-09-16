@@ -303,6 +303,8 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
     tolerance = None
     if task.get("type", "joint_target") == "base_target":
         tolerance = float(task.get("reach_radius", 0.15))
+    elif task.get("type") == "conditions" and task.get("conditions"):
+        tolerance = float(task["conditions"][0].get("tolerance", 0.05))   # 成功 = 全条件が許容内 (info の success が優先)
     elif es.get("metric") == "final_abs_err":
         tolerance = float(es["threshold"])
     logger = _EpisodeLogger(os.path.join(out_dir, "progress.csv"), weights, n_envs,

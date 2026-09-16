@@ -238,7 +238,12 @@ def robot_info(urdf_path: str) -> dict[str, Any]:
     text = ET.tostring(root, encoding="unicode").lower()
     if "odom" in text:
         sensors["odom"] = True
-    return {"name": root.get("name", "robot"), "fixed_base": fixed,
+    from .fk import load_tree
+    tree = load_tree(urdf_path)
+    # 手先候補: 可動関節の子リンク (と、その先の固定リンク)。先端の目安は visual の原点
+    movable_children = {j["child"] for j in tree["joints"].values() if j["type"] in ("revolute", "continuous", "prismatic")}
+    links = [{"name": l, "tip": tree["tips"].get(l, [0.0, 0.0, 0.0]), "movable": l in movable_children} for l in tree["links"] if l != tree["root"]]
+    return {"name": root.get("name", "robot"), "fixed_base": fixed, "root_link": tree["root"], "links": links,
             "joints": [{"name": j["name"], "type": j["type"], "mode": modes.get(j["name"], "position"),
                         "lower": j["lower"] if j["lower"] is not None else 0.0,
                         "upper": j["upper"] if j["upper"] is not None else 0.0,

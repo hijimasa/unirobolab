@@ -23,6 +23,8 @@ FIXED_SIZE_OBS_SOURCES = {
     "projected_gravity": 3,
     "imu_orientation": 4,
     "base_goal_xy": 2,
+    "link_position": 3,
+    "link_goal": 3,
 }
 
 

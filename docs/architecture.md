@@ -805,3 +805,27 @@ Project(プロジェクトと失効)+ Env(環境検出)+ TaskSpec(task.json の�
   非常停止 ok)。画面: docs/images/wizard/w5_check.png。
 - 未実装(v2.1 の残り): ② の 3D での開始条件編集と関節目標の可視化、① の項リスト/JSON 同期、
   外部処理の常駐化、初回セットアップ画面、⑤ をホストの ROS 2 で回す場合の simulation_ros2_utils の配布。
+
+## 26. 条件から観測・報酬を組む学習環境と、手先の条件(2026-09-17)
+
+固定基体 = 関節目標、移動基体 = 地点到達、という v1 の固定を外すための土台。
+
+- `task.type == "conditions"`(task.py の ConditionTask / Condition): 条件の列 `conditions[]`
+  (kind: joints_near | base_in_region | link_near、各 tolerance)から、毎エピソードの目標の抽選、
+  誤差 (rad / m)、報酬 (progress = 誤差の減り分、distance、reached = 全条件が許容内、action_rate、velocity)、
+  成功 (終了時に全条件が許容内)、終了 (stop_at_goal のとき) を組む。DirectVecEnv は条件ごとの目標を持ち、
+  観測ソース command / base_goal_xy / link_goal をその目標から作る。
+- **順運動学**(fk.py): URDF から根リンク → 対象リンクの chain (段ごとの xyz, rpy と、可動段の joint, axis, type)
+  を取り、`fk_point(chain, q, point)` でリンク上の点の位置を根リンク座標系で求める。fk_point は obs_math.py と
+  policy_node.py にも同じ写しを置く (test_obs_math が同一性を検査)。生成した ROS 2 パッケージは joint_states
+  だけから同じ観測を作れるので、実機でも手先位置のセンサは要らない。
+- 契約の観測ソースを 2 つ追加: `link_position`(size 3、chain と point を項に持つ)、`link_goal`(size 3、
+  目標点 − リンク点。目標は goal トピックから 3 値)。
+- タスク仕様の条件 `link_near`(link、region = box {center, size} または sphere、tolerance、point は省略で
+  リンクの visual 原点): `task-gen` が観測を q, qd, link_position, link_goal, prev_a に組み替え、学習設定を
+  conditions 型 (早期終了は success_rate) にする。`task-preset link_target` が例。robot-info はリンク一覧
+  (movable = 可動関節の子) と先端の目安を返す。
+- GUI ②: 固定基体では「関節を目標角へ / 手先を所定の場所へ」を選べる。後者はリンク、領域の中心と大きさ
+  (根リンク座標系 [m])、3D に緑の箱。目標は箱の中から抽選するので、届く範囲に置く必要がある。
+- 未対応: sim2sim の判定は関節目標と地点到達のみ (手先の条件は joint_states から FK で判定する枠を足す)、
+  移動基体のロボットでの link_near、条件の複数指定 (同種は 1 つまで、関節目標と手先は同時不可)。

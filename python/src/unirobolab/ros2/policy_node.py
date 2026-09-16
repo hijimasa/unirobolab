@@ -86,6 +86,33 @@ def process_action_term(raw: np.ndarray, spec: dict) -> tuple[np.ndarray, np.nda
     return a, target
 
 
+def fk_point(chain: list, q: dict, point=None) -> np.ndarray:
+    """chain の段を根から順に適用し、最後のリンク座標系の point (既定: 原点) を根の座標系で返す。"""
+    def rpy_rot(r: float, p: float, y: float) -> np.ndarray:
+        cr, sr, cp, sp, cy, sy = np.cos(r), np.sin(r), np.cos(p), np.sin(p), np.cos(y), np.sin(y)
+        return np.array([[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+                         [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+                         [-sp, cp * sr, cp * cr]])
+
+    def axis_rot(axis: np.ndarray, a: float) -> np.ndarray:
+        k = axis / (np.linalg.norm(axis) or 1.0)
+        K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+        return np.eye(3) + np.sin(a) * K + (1 - np.cos(a)) * (K @ K)
+
+    R = np.eye(3); t = np.zeros(3)
+    for s in chain:
+        t = t + R @ np.asarray(s.get("xyz", [0, 0, 0]), float)
+        R = R @ rpy_rot(*[float(v) for v in s.get("rpy", [0, 0, 0])])
+        jn = s.get("joint")
+        if jn is not None:
+            a = float(q.get(jn, 0.0)); axis = np.asarray(s.get("axis", [1, 0, 0]), float)
+            if s.get("type") == "prismatic":
+                t = t + R @ (axis / (np.linalg.norm(axis) or 1.0) * a)
+            else:
+                R = R @ axis_rot(axis, a)
+    return (t + R @ np.asarray(point if point is not None else [0.0, 0.0, 0.0], float)).astype(np.float32)
+
+
 class PolicyNode(Node):
     def __init__(self) -> None:
         super().__init__("policy_node")
@@ -342,6 +369,9 @@ class PolicyNode(Node):
         for spec, n, _ in self.observations:
             if spec["source"] == "base_goal_xy":
                 return 2  # world x, y on the goal topic
+        for spec, n, _ in self.observations:
+            if spec["source"] == "link_goal":
+                return 3  # goal point in the root-link frame on the goal topic
         return 0
 
     def _fail(self, msg: str) -> None:
@@ -451,6 +481,11 @@ class PolicyNode(Node):
             elif s == "base_goal_xy":
                 d = np.array([self.goal[0] - self.base_pos[0], self.goal[1] - self.base_pos[1], 0.0])
                 v = (quat_to_rot(self.base_quat).T @ d)[:2]
+            elif s in ("link_position", "link_goal"):
+                # forward kinematics of joint_states along the contract's chain (root-link frame)
+                qmap = {name: float(pos) for name, pos in zip(self.js.name, self.js.position)} if self.js is not None else {}
+                p = fk_point(spec["chain"], qmap, spec.get("point"))
+                v = p if s == "link_position" else self.goal[:3] - p
             else:
                 v = np.zeros(n, dtype=np.float32)
             if v is None:

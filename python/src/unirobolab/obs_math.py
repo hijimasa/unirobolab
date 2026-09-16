@@ -32,3 +32,30 @@ def process_action_term(raw: np.ndarray, spec: dict) -> tuple[np.ndarray, np.nda
         a = np.clip(a, clip[0], clip[1])
     target = a * np.asarray(spec.get("scale", 1.0), dtype=np.float32) + np.asarray(spec.get("offset", 0.0), dtype=np.float32)
     return a, target
+
+
+def fk_point(chain: list, q: dict, point=None) -> np.ndarray:
+    """chain の段を根から順に適用し、最後のリンク座標系の point (既定: 原点) を根の座標系で返す。"""
+    def rpy_rot(r: float, p: float, y: float) -> np.ndarray:
+        cr, sr, cp, sp, cy, sy = np.cos(r), np.sin(r), np.cos(p), np.sin(p), np.cos(y), np.sin(y)
+        return np.array([[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+                         [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+                         [-sp, cp * sr, cp * cr]])
+
+    def axis_rot(axis: np.ndarray, a: float) -> np.ndarray:
+        k = axis / (np.linalg.norm(axis) or 1.0)
+        K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+        return np.eye(3) + np.sin(a) * K + (1 - np.cos(a)) * (K @ K)
+
+    R = np.eye(3); t = np.zeros(3)
+    for s in chain:
+        t = t + R @ np.asarray(s.get("xyz", [0, 0, 0]), float)
+        R = R @ rpy_rot(*[float(v) for v in s.get("rpy", [0, 0, 0])])
+        jn = s.get("joint")
+        if jn is not None:
+            a = float(q.get(jn, 0.0)); axis = np.asarray(s.get("axis", [1, 0, 0]), float)
+            if s.get("type") == "prismatic":
+                t = t + R @ (axis / (np.linalg.norm(axis) or 1.0) * a)
+            else:
+                R = R @ axis_rot(axis, a)
+    return (t + R @ np.asarray(point if point is not None else [0.0, 0.0, 0.0], float)).astype(np.float32)

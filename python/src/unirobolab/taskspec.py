@@ -30,7 +30,7 @@ from typing import Any
 from . import draft as draft_mod
 
 SPEC_VERSION = 0
-CONDITION_TYPES = ("joints_near", "base_in_region")
+CONDITION_TYPES = ("joints_near", "base_in_region", "link_near")
 
 
 class TaskSpecError(ValueError):
@@ -47,12 +47,16 @@ def preset(kind: str, urdf: str, name: str | None = None, namespace: str | None 
     if kind == "joint_target":
         goal = [{"type": "joints_near", "range": "auto", "tolerance": 0.05}]
         episode = {"time_s": 2.0, "hold_s": 0.0}
+    elif kind == "link_target":
+        goal = [{"type": "link_near", "link": "", "tolerance": 0.03,
+                 "region": {"shape": "box", "center": [0.3, 0.0, 0.3], "size": [0.2, 0.2, 0.2]}}]
+        episode = {"time_s": 3.0, "hold_s": 0.0}
     elif kind == "base_target":
         goal = [{"type": "base_in_region", "tolerance": 0.15,
                  "region": {"shape": "ring", "center": [0.0, 0.0], "r_min": 1.0, "r_max": 2.5, "angle_deg": [-180.0, 180.0]}}]
         episode = {"time_s": 10.0, "hold_s": 0.0}
     else:
-        raise TaskSpecError(f"unknown preset {kind!r} (joint_target | base_target)")
+        raise TaskSpecError(f"unknown preset {kind!r} (joint_target | link_target | base_target)")
     return {"spec_version": SPEC_VERSION, "robot": robot,
             "start": {"joints": "zero", "base": {"xy": [0.0, 0.0], "yaw_deg": [0.0, 0.0]}},
             "goal": goal, "episode": episode, "training": {"n_envs": 8, "success_target": 0.9}}
@@ -80,9 +84,14 @@ def validate(spec: dict[str, Any]) -> list[str]:
             r = c.get("region", {})
             if r.get("shape") not in ("ring", "box", "sphere"):
                 problems.append(f"goal[{i}].region.shape は ring | box | sphere")
+    for i, c in enumerate(goal):
+        if c.get("type") == "link_near" and not c.get("link"):
+            problems.append(f"goal[{i}] (link_near) は link が要る")
     types = [c.get("type") for c in goal]
-    if len(set(types)) > 1:
-        problems.append("v1 では終了条件は 1 種類 (関節目標か基体の領域のどちらか)")
+    if len(types) != len(set(types)):
+        problems.append("同じ種類の終了条件は 1 つまで")
+    if "joints_near" in types and "link_near" in types:
+        problems.append("関節目標と手先の条件は同時に使えない (どちらかにする)")
     if float(spec.get("episode", {}).get("time_s", 0) or 0) <= 0:
         problems.append("episode.time_s は正の数")
     return problems
@@ -153,6 +162,11 @@ def generate(spec: dict[str, Any], spec_dir: str = ".") -> tuple[dict[str, Any],
     c = spec["goal"][0]
     tol = float(c["tolerance"])
     task["episode_steps"] = max(1, int(round(float(ep.get("time_s", 2.0)) * rate)))
+    if c["type"] == "link_near":
+        _apply_link_near(spec, c, contract, task, es, urdf, tol)
+        train["n_envs"] = int(spec.get("training", {}).get("n_envs", 8))
+        contract["_task_spec"] = {"spec_version": SPEC_VERSION, "goal": spec["goal"], "episode": ep}
+        return contract, train
     if c["type"] == "joints_near":
         if task.get("type") != "joint_target":
             raise TaskSpecError("関節目標の条件は固定基体のロボット向け (この URDF は移動基体と判定)")
@@ -171,3 +185,35 @@ def generate(spec: dict[str, Any], spec_dir: str = ".") -> tuple[dict[str, Any],
     train["n_envs"] = int(spec.get("training", {}).get("n_envs", 8))
     contract["_task_spec"] = {"spec_version": SPEC_VERSION, "goal": spec["goal"], "episode": ep}
     return contract, train
+
+
+def _apply_link_near(spec: dict[str, Any], c: dict[str, Any], contract: dict[str, Any], task: dict[str, Any],
+                     es: dict[str, Any], urdf: str, tol: float) -> None:
+    """手先 (リンクの点) を領域へ: 契約の観測を q, qd, link_position, link_goal, prev_a にし、
+    学習設定を conditions 型にする。固定基体・移動基体を問わない (v1 は固定基体の腕を想定)。"""
+    from .fk import chain_to, load_tree
+    if task.get("type") != "joint_target":
+        raise TaskSpecError("手先の条件は v1 では固定基体のロボット向け")
+    tree = load_tree(urdf)
+    link = c["link"]
+    if link not in tree["links"]:
+        raise TaskSpecError(f"link {link!r} が URDF に無い")
+    chain = chain_to(tree, link)
+    point = list(c.get("point") or tree["tips"].get(link, [0.0, 0.0, 0.0]))
+    region = c.get("region") or {"shape": "box", "center": [0.3, 0.0, 0.3], "size": [0.2, 0.2, 0.2]}
+    obs = contract["observations"]
+    keep = [t for t in obs if t.get("source") in ("joint_position", "joint_velocity")]
+    contract["observations"] = keep + [
+        {"name": "tip", "source": "link_position", "unit": "m", "scale": 1.0, "link": link, "point": point, "chain": chain},
+        {"name": "tip_goal", "source": "link_goal", "unit": "m", "scale": 1.0, "link": link, "point": point, "chain": chain},
+        {"name": "prev_a", "source": "last_action"},
+    ]
+    task.pop("goal_range", None)
+    task["type"] = "conditions"
+    task["conditions"] = [{"kind": "link_near", "link": link, "point": point, "chain": chain, "region": region, "tolerance": tol}]
+    task["reward"] = {"progress": 5.0, "distance": -0.5, "reached": 1.0, "action_rate": -0.05}
+    task["stop_at_goal"] = False
+    task["_note"] = f"task.json: link_near {link} point {point} in {region.get('shape')} region, success within {tol} m"
+    es.clear()
+    es.update({"metric": "success_rate", "threshold": float(spec.get("training", {}).get("success_target", 0.9)), "window": 200, "min_timesteps": 50000})
+    contract.setdefault("ros", {})["goal_topic"] = contract.get("ros", {}).get("goal_topic") or f"/{contract['ros'].get('namespace', 'robot')}/policy/command"

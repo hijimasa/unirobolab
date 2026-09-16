@@ -24,6 +24,13 @@ JOINT_TERMS = ("tracking_l1", "tracking_l2", "action_rate", "velocity")
 BASE_TERMS = ("base_distance", "base_progress", "base_reached", "action_rate", "velocity")
 
 
+def make_task(cfg: dict[str, Any], n_goal: int, joints: list[str]):
+    """task 節から Task (joint_target / base_target) か ConditionTask (conditions) を作る。"""
+    if cfg.get("type") == "conditions":
+        return ConditionTask(cfg, joints)
+    return Task(cfg, n_goal)
+
+
 class Task:
     def __init__(self, cfg: dict[str, Any], n_goal: int) -> None:
         self.cfg = cfg
@@ -81,3 +88,89 @@ class Task:
         }
         contrib = {k: w * terms[k] for k, w in self.weights.items()}
         return float(sum(contrib.values())), contrib, bool(reached and self.terminate_on_reach)
+
+
+# ----------------------------------------------------------------------------- conditions
+class Condition:
+    """終了 (成功) 条件 1 つ。kind: joints_near | base_in_region | link_near。
+    goal は毎エピソード抽選し、err は「今どれだけ満たしていないか」(rad / m)。"""
+
+    def __init__(self, cfg: dict[str, Any], joints: list[str]) -> None:
+        self.cfg = cfg
+        self.kind = cfg["kind"]
+        self.tolerance = float(cfg.get("tolerance", 0.05))
+        self.joints = joints
+        if self.kind == "joints_near":
+            rng = cfg.get("range", [-0.5, 0.5])
+            self.low = np.full(len(joints), float(rng[0]), np.float32)
+            self.high = np.full(len(joints), float(rng[1]), np.float32)
+        elif self.kind == "base_in_region":
+            reg = cfg.get("region", {})
+            self.radius = (float(reg.get("r_min", 1.0)), float(reg.get("r_max", 2.5)))
+            self.angle = tuple(float(a) for a in reg.get("angle_deg", [-180.0, 180.0]))
+        elif self.kind == "link_near":
+            self.link = cfg["link"]
+            self.chain = list(cfg["chain"])
+            self.point = list(cfg.get("point") or [0.0, 0.0, 0.0])
+            reg = cfg.get("region", {"shape": "box", "center": [0.3, 0.0, 0.3], "size": [0.2, 0.2, 0.2]})
+            self.center = np.asarray(reg.get("center", [0.0, 0.0, 0.0]), np.float32)
+            self.half = 0.5 * np.asarray(reg.get("size", [0.2, 0.2, 0.2]), np.float32) if reg.get("shape", "box") == "box" \
+                else np.full(3, float(reg.get("radius", 0.1)), np.float32)
+        else:
+            raise ValueError(f"unknown condition kind {self.kind!r}")
+
+    def sample(self, rng: np.random.Generator, spawn_xy: np.ndarray) -> np.ndarray:
+        if self.kind == "joints_near":
+            return rng.uniform(self.low, self.high).astype(np.float32)
+        if self.kind == "base_in_region":
+            r = rng.uniform(*self.radius); a = np.deg2rad(rng.uniform(*self.angle))
+            return (np.asarray(spawn_xy, np.float64) + r * np.array([np.cos(a), np.sin(a)])).astype(np.float32)
+        return (self.center + rng.uniform(-self.half, self.half)).astype(np.float32)
+
+    def error(self, goal: np.ndarray, q_by_name: dict[str, float], q: np.ndarray, base_pos: np.ndarray) -> float:
+        if self.kind == "joints_near":
+            return float(np.mean(np.abs(q - goal[: len(q)])))
+        if self.kind == "base_in_region":
+            return float(np.linalg.norm(goal[:2] - np.asarray(base_pos)[:2]))
+        from .fk import fk_point
+        return float(np.linalg.norm(goal - fk_point(self.chain, q_by_name, self.point)))
+
+
+class ConditionTask:
+    """task.type == "conditions": 条件の列から報酬・成功・終了を組む。
+    報酬項 (reward の重み): progress (誤差の減り分)、distance (誤差)、reached (許容内で 1)、action_rate、velocity。"""
+
+    TERMS = ("progress", "distance", "reached", "action_rate", "velocity")
+
+    def __init__(self, cfg: dict[str, Any], joints: list[str]) -> None:
+        self.cfg = cfg
+        self.type = "conditions"
+        self.steps_per_action = int(cfg.get("physics_steps_per_action", 1))
+        self.episode_steps = int(cfg.get("episode_steps", 100))
+        self.weights: dict[str, float] = dict(cfg.get("reward", {"progress": 5.0, "distance": -0.5, "reached": 1.0, "action_rate": -0.05}))
+        unknown = [k for k in self.weights if k not in self.TERMS]
+        if unknown:
+            raise ValueError(f"unknown reward terms {unknown} for conditions; available: {self.TERMS}")
+        self.conditions = [Condition(c, joints) for c in cfg.get("conditions", [])]
+        if not self.conditions:
+            raise ValueError("conditions task needs at least one condition")
+        self.stop_at_goal = bool(cfg.get("stop_at_goal", False))
+        self.hold_steps = int(cfg.get("hold_steps", 0))
+
+    def by_kind(self, kind: str) -> Condition | None:
+        for c in self.conditions:
+            if c.kind == kind:
+                return c
+        return None
+
+    def reward(self, errs: list[float], prev_errs: list[float], qd, action, prev_action) -> tuple[float, dict[str, float], bool]:
+        reached_all = all(e <= c.tolerance for e, c in zip(errs, self.conditions))
+        terms = {
+            "progress": float(sum(p - e for p, e in zip(prev_errs, errs))),
+            "distance": float(sum(errs)),
+            "reached": 1.0 if reached_all else 0.0,
+            "action_rate": float(np.sum(np.abs(action - prev_action))),
+            "velocity": float(np.sum(np.abs(qd))),
+        }
+        contrib = {k: w * terms[k] for k, w in self.weights.items()}
+        return float(sum(contrib.values())), contrib, bool(reached_all and self.stop_at_goal)
