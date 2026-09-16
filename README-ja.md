@@ -76,3 +76,7 @@ sim2sim のシナリオは外乱注入とランダム目標に対応。GUI の�
 
 Apache-2.0。UniRoboLab は個人の独立したプロジェクトであり、Unity Technologies
 とは無関係で、その承認を受けたものでもありません。
+
+## チュートリアル
+
+GUI で URDF から実機用パッケージまで通す手順: [docs/tutorial.md](docs/tutorial.md)

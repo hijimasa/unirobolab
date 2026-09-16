@@ -86,3 +86,7 @@ the design, milestones and results.
 
 Apache-2.0. UniRoboLab is an independent project and is not affiliated with
 or endorsed by Unity Technologies.
+
+## Tutorial
+
+URDF to a deployable ROS 2 package through the GUI, with screenshots: [docs/tutorial.md](docs/tutorial.md) (Japanese)
