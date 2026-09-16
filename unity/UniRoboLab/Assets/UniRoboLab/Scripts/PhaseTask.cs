@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text;
 using TMPro;
 using UnityEngine;
@@ -19,6 +20,7 @@ public class PhaseTask : Phase
     float m_EstAt = -1f;
     bool m_Generating;
     LineRenderer m_RingIn, m_RingOut;
+    readonly List<LineRenderer> m_Arcs = new List<LineRenderer>();   // 関節目標: 各関節の目標範囲を弧で
 
     public override void Build(RectTransform main, RectTransform details)
     {
@@ -77,6 +79,7 @@ public class PhaseTask : Phase
         if (m_IsBase) { m_RMin.value = g.region.r_min; m_RMax.value = g.region.r_max; }
         else { bool manual = g.range != null && g.range.Length == 2; m_RangeMode.Set(manual ? 1 : 0); if (manual) m_Range.value = Mathf.Max(Mathf.Abs(g.range[0]), Mathf.Abs(g.range[1])); }
         m_Tol.onValueChanged.Invoke(m_Tol.value); m_Time.onValueChanged.Invoke(m_Time.value);
+        DrawGoal();
         RefreshDetails();
         W.Status(Ui.T("成功の条件と制限時間を決めて「次へ」", "Set the success condition and the time limit, then Next"));
     }
@@ -139,10 +142,11 @@ public class PhaseTask : Phase
         m_TrainText.text = System.IO.File.Exists(t) ? System.IO.File.ReadAllText(t) : Ui.T("(まだありません)", "(none yet)");
     }
 
-    /// <summary>3D: 地点到達なら環 (緑) を描く。関節目標は v1 では描かない。</summary>
+    /// <summary>3D: 地点到達なら環 (緑)、関節目標なら各関節の目標範囲を弧 (緑) で描く。</summary>
     void DrawGoal()
     {
-        if (!m_IsBase) { if (m_RingIn != null) { m_RingIn.enabled = false; m_RingOut.enabled = false; } return; }
+        if (!m_IsBase) { if (m_RingIn != null) { m_RingIn.enabled = false; m_RingOut.enabled = false; } DrawJointArcs(); return; }
+        foreach (LineRenderer a in m_Arcs) a.enabled = false;
         if (m_RingIn == null) { m_RingIn = MakeRing("GoalRingIn"); m_RingOut = MakeRing("GoalRingOut"); }
         Ring(m_RingIn, m_RMin.value); Ring(m_RingOut, m_RMax.value);
         m_RingIn.enabled = m_RingOut.enabled = true;
@@ -166,6 +170,55 @@ public class PhaseTask : Phase
         for (int i = 0; i < n; i++) { float a = i * Mathf.PI * 2f / n; lr.SetPosition(i, new Vector3(Mathf.Cos(a) * r, 0.02f, Mathf.Sin(a) * r)); }
     }
 
-    public override void Leave() { if (m_RingIn != null) { m_RingIn.enabled = false; m_RingOut.enabled = false; } }
+    /// <summary>プレビューのロボット (① でスポーン) の回転関節ごとに、目標角の範囲を弧で描く。</summary>
+    void DrawJointArcs()
+    {
+        var buf = new List<GameObject>(); W.Sim.GetEntitiesSnapshot(buf);
+        GameObject ent = null; foreach (GameObject e in buf) if (e != null) { ent = e; break; }
+        int k = 0;
+        if (ent != null)
+        {
+            float range = m_RangeMode.Index == 1 ? m_Range.value : AutoRange();
+            foreach (ArticulationBody ab in ent.GetComponentsInChildren<ArticulationBody>())
+            {
+                if (ab.isRoot || ab.jointType != ArticulationJointType.RevoluteJoint) continue;
+                if (k >= m_Arcs.Count) m_Arcs.Add(MakeRing("JointArc" + k));
+                LineRenderer lr = m_Arcs[k++]; lr.loop = false; lr.startWidth = lr.endWidth = 0.012f;
+                Vector3 center = ab.transform.TransformPoint(ab.anchorPosition);
+                Vector3 axis = ab.transform.TransformDirection(ab.anchorRotation * Vector3.right).normalized;   // 関節の回転軸
+                Vector3 radial = Vector3.Cross(axis, Mathf.Abs(Vector3.Dot(axis, Vector3.up)) > 0.9f ? Vector3.forward : Vector3.up).normalized;
+                float r = 0.12f; const int n = 40;
+                lr.positionCount = n + 1;
+                for (int i = 0; i <= n; i++)
+                {
+                    float a = -range + 2f * range * i / n;   // 現在角 0 を中心に ±range
+                    lr.SetPosition(i, center + Quaternion.AngleAxis(a * Mathf.Rad2Deg, axis) * radial * r);
+                }
+                lr.enabled = true;
+            }
+            var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
+            if (cam != null && k > 0) { var rs = ent.GetComponentsInChildren<Renderer>(); if (rs.Length > 0) { Bounds b = rs[0].bounds; foreach (Renderer rr in rs) b.Encapsulate(rr.bounds); cam.target = b.center; cam.distance = Mathf.Max(0.8f, b.extents.magnitude * 3f); } }
+        }
+        for (int i = k; i < m_Arcs.Count; i++) m_Arcs[i].enabled = false;
+    }
+
+    /// <summary>「自動」のときの目標範囲 (可動範囲の 80 %) を表示用に見積もる: 生成された学習設定があればそれ、無ければ 1.0。</summary>
+    float AutoRange()
+    {
+        string t = P.Abs(P.D.train);
+        if (System.IO.File.Exists(t))
+        {
+            string json = System.IO.File.ReadAllText(t);
+            int i = json.IndexOf("\"goal_range\"", System.StringComparison.Ordinal);
+            if (i >= 0) { int a = json.IndexOf('[', i), b = json.IndexOf(']', a); if (a > 0 && b > a) { string[] p = json.Substring(a + 1, b - a - 1).Split(','); if (p.Length == 2 && float.TryParse(p[1], out float hi)) return Mathf.Abs(hi); } }
+        }
+        return 1.0f;
+    }
+
+    public override void Leave()
+    {
+        if (m_RingIn != null) { m_RingIn.enabled = false; m_RingOut.enabled = false; }
+        foreach (LineRenderer a in m_Arcs) a.enabled = false;
+    }
     public override void Action(string name) { if (name == "next") OnNext(); }
 }
