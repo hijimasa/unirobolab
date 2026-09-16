@@ -565,3 +565,30 @@ diffbot の配備で目標付近の最終距離が 0.22〜0.26 m とふらつき
 目標 0.02、車輪速度 0.2 の標準偏差)を入れて再学習(226 s、早期終了 100.8k ステップ、評価 0.071 m)。
 sim2sim は 2 回とも PASS(0.017 / 0.108 / 0.113 m と 0.020 / 0.103 / 0.208 m)。
 sim2sim の不合格を学習設定に返す、という運用の最初の実例。
+
+## 15. 優先順位 3: Unity から方策を動かす(ライブ実行器と Policy パネル、2026-09-16)
+
+### 判断: 推論は Unity の中でやらない
+Inference Engine(旧 Sentis)2.6 の ONNX 変換はエディタ専用(`Editor/ONNX/ONNXModelConverter.cs`)で、
+ビルドしたプレイヤーの `ModelLoader.Load(path)` が読めるのは変換済みの `.sentis` だけ。
+「任意の ONNX を配布バイナリだけで動かす」は成立しない。代案の ONNX Runtime ネイティブ同梱は
+配線の実装が 4 つ目になり保守負荷も増える。そこで:
+
+- **ライブ実行器 `unirobolab live`**(`direct/live.py`): 学習サーバに PLAY(op 7)と
+  「再生中の指令適用+観測」(STEP steps=0)を足し、Python 側が実時間で方策周期ごとに
+  観測 → onnxruntime → 指令を回す。観測・行動は `obs_math` を使うので配線の実装は増えない。
+  目標は `--goal` と stdin(`goal v1 v2 ...`、`stop`)。状態行を毎秒 JSON で stdout に出す。
+- **Policy パネル**(本体 `Assets/Scripts/PolicyPanel.cs`、ブランチ live-policy): 契約・ONNX・
+  エンティティ・目標を入力し、Run で上のコマンドを子プロセスとして起動、Set goal で stdin、
+  Stop で終了。コマンドは `settings.policy_runner_command`(既定 `python3 -m unirobolab live`)と
+  `settings.policy_runner_env`(PYTHONPATH など)。学習サーバが無効なら案内を出す。
+  ヘッドレス検証用に `SIM_POLICY_AUTORUN="契約|ONNX|エンティティ|目標|秒数"`。
+  同梱予定の uv 環境の python を `policy_runner_command` に指すと、利用者は Python を意識しない。
+
+結果(ROS 2 なし): servo_demo_rl の方策で目標 (0.5, 0.5) → 最終誤差 3.9 mrad、stdin で (−0.5, −0.5) に
+変更 → 1.4 mrad、25 Hz。diffbot_rl で (1.5, 0) → (0, 1.5)、8 s で 0.12 m、10 Hz。
+
+検証(ヘッドレス、本体ブランチ live-policy): `SIM_POLICY_AUTORUN` でシミュレータ自身が
+`python3 -m unirobolab live` を起動し、servo_demo_rl の方策が 25 Hz で目標 (0.4, −0.4) に
+最終誤差 6.7 mrad。Policy パネルの UI 本体は実行時生成の uGUI で、画面での操作確認は
+ウィンドウ表示できる環境でお願いしたい(ヘッドレスでは UI を作らない)。

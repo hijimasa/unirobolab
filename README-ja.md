@@ -46,7 +46,8 @@ ROS 2 なしに行える。複数シミュレータプロセスのプールも�
 このマシンでは約 2 倍止まり。Unity 6 に GPU 物理が無い件は
 [docs/unity6-gpu-physics-survey.md](docs/unity6-gpu-physics-survey.md)。外部で学習した方策の取り込みは `unirobolab import-isaaclab`(Isaac Lab の `env.yaml` から契約を生成。
 要素ごとの scale/offset、Twist 指令、IMU・オドメトリ入力、cmd_vel 出力を契約で表せる)。
-sim2sim のシナリオは外乱注入とランダム目標に対応。GUI はこれから。
+sim2sim のシナリオは外乱注入とランダム目標に対応。GUI の最初の部品として、本体の Policy パネルから契約 + ONNX をスポーン済みロボットで ROS なしに
+動かせる(`unirobolab live` を起動して学習サーバ経由で回す)。残りの GUI はこれから。
 設計・マイルストーン・結果は [docs/architecture.md](docs/architecture.md) を参照。
 
 ## 構成

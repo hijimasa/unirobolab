@@ -86,6 +86,14 @@ def cmd_import_isaaclab(a) -> int:
     return 0
 
 
+def cmd_live(a) -> int:
+    from unirobolab.direct import live
+    c = _load(a.contract, a.schema)
+    goal = [float(v) for v in a.goal.split(",")] if a.goal else None
+    entity = a.entity or (c.ros.namespace if c.ros else "robot")
+    return live.run(c, entity, a.onnx or c.onnx_path, a.host, a.port, goal, a.duration, a.log, play=not a.no_play)
+
+
 def cmd_train(a) -> int:
     from unirobolab import train
     ents = a.entities.split(",") if a.entities else None
@@ -141,6 +149,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--asset", default="robot")
     s.add_argument("--action", help="action term name (default: the first)")
     s.set_defaults(fn=cmd_import_isaaclab)
+
+    s = sub.add_parser("live", help="run a policy in real time through the simulator's learning server (no ROS)")
+    add_contract(s)
+    s.add_argument("--onnx", help="policy file (default: the contract's)")
+    s.add_argument("--entity", help="entity name (default: ros.namespace)")
+    s.add_argument("--goal", help="comma-separated initial goal; later: 'goal v1 v2 ...' lines on stdin")
+    s.add_argument("--duration", type=float, help="seconds to run (default: until 'stop' on stdin)")
+    s.add_argument("--log", help="JSONL of every observation/action")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=10100)
+    s.add_argument("--no-play", action="store_true", help="do not switch the simulation to PLAYING")
+    s.set_defaults(fn=cmd_live)
 
     s = sub.add_parser("train", help="train a policy for the contract (needs ROS 2 + the simulator)")
     add_contract(s)

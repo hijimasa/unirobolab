@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-OP_INFO, OP_RESET, OP_STEP, OP_PING, OP_PAUSE, OP_SPAWN = 1, 2, 3, 4, 5, 6
+OP_INFO, OP_RESET, OP_STEP, OP_PING, OP_PAUSE, OP_SPAWN, OP_PLAY = 1, 2, 3, 4, 5, 6, 7
 
 
 class LearningServerError(RuntimeError):
@@ -107,6 +107,14 @@ class LearningClient:
     def pause(self) -> None:
         """Same transition as set_simulation_state(PAUSED); stepping needs it."""
         self._parse_states(self._rpc(bytes([OP_PAUSE]) + struct.pack("<H", 0)))
+
+    def play(self) -> None:
+        """Same transition as set_simulation_state(PLAYING): real time, for live policy runs."""
+        self._parse_states(self._rpc(bytes([OP_PLAY]) + struct.pack("<H", 0)))
+
+    def observe(self, entities: list[str], commands: list[dict | None] | None = None):
+        """Apply commands (optional) and read states without stepping; allowed while playing."""
+        return self.step(entities, 0, commands if commands is not None else [None] * len(entities))
 
     def spawn(self, name: str, urdf_path: str, x: float = 0.0, y: float = 0.0, z: float = 0.0,
               yaw: float = 0.0) -> str:

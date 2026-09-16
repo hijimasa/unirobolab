@@ -9,6 +9,7 @@ unirobolab gen <contract.json> --out generated/           # ROS 2 パッケー�
 unirobolab sim2sim <contract.json> --pkg <pkg>            # (コンテナ内) 生成物を動かして合否を出す
 unirobolab train <contract.json> --config <train.json> --out <run> --n-envs K   # PPO で学習し policy.onnx を書く
 unirobolab import-isaaclab <env.yaml> --joints j1,j2,... --onnx policy.onnx --out contract.json   # Isaac Lab の方策を契約に
+unirobolab live <contract.json> --goal 0.5,0.5                     # 学習サーバ経由で方策を実時間実行 (ROS なし、GUI の Policy パネルが使う)
 ```
 
 - `gen` は生成パッケージにノード本体 `unirobolab/ros2/policy_node.py` を複製し、契約 JSON と
