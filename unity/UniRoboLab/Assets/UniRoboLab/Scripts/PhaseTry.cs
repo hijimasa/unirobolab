@@ -16,7 +16,7 @@ public class PhaseTry : Phase
     TMP_Text m_Plain, m_Raw, m_GoalL;
     GameObject m_SliderBox; readonly List<Slider> m_Sliders = new List<Slider>();
     ExternalProcess m_Proc;
-    bool m_Picking, m_Running; int m_IsBase = -1, m_GoalSize = -1; float m_SendAt = -1f, m_SavedScale = -1f, m_TrailAt;
+    bool m_Picking, m_Running, m_IsLink; int m_IsBase = -1, m_GoalSize = -1; float m_SendAt = -1f, m_SavedScale = -1f, m_TrailAt;
     GameObject m_Marker; LineRenderer m_Trail; readonly List<Vector3> m_TrailPts = new List<Vector3>();
     string m_Entity; readonly StringBuilder m_RawBuf = new StringBuilder();
 
@@ -44,7 +44,9 @@ public class PhaseTry : Phase
     {
         TaskSpec spec = TaskSpec.Load(P.Abs(P.D.task));
         m_IsBase = spec.Goal0.type == "base_in_region" ? 1 : 0;
+        m_IsLink = spec.Goal0.type == "link_near";
         m_Pick.gameObject.SetActive(m_IsBase == 1); m_GoalL.gameObject.SetActive(m_IsBase == 0); m_SliderBox.SetActive(m_IsBase == 0);
+        m_GoalL.text = m_IsLink ? Ui.T("目標の位置 (根リンク座標系 [m])", "Goal position (root-link frame [m])") : Ui.T("目標 (関節ごと)", "Goal (per joint)");
         EnsureEntity();
         W.Status(Ui.T("「動かす」を押してください", "Press Run"));
     }
@@ -74,7 +76,14 @@ public class PhaseTry : Phase
         if (string.IsNullOrEmpty(runner)) runner = W.Py + " -m unirobolab live";
         var cmd = new StringBuilder(runner).Append(' ').Append(ExternalProcess.Quote(P.Abs(P.D.contract)))
             .Append(" --onnx ").Append(ExternalProcess.Quote(P.OnnxPath)).Append(" --entity ").Append(ExternalProcess.Quote(m_Entity))
-            .Append(" --port ").Append(Env.LearningPort()).Append(" 2>&1");
+            .Append(" --port ").Append(Env.LearningPort());
+        if (m_IsLink)
+        {
+            // 手先: 最初の目標は領域の中心 (0 のままでは届かない点を目標にしてしまう)
+            TaskSpec sp = TaskSpec.Load(P.Abs(P.D.task)); float[] c = sp.Goal0.region.center;
+            if (c != null && c.Length == 3) cmd.Append(" --goal ").Append($"{c[0]:F3},{c[1]:F3},{c[2]:F3}");
+        }
+        cmd.Append(" 2>&1");
         m_Proc = W.Launch(cmd.ToString());
         m_Running = true; m_GoalSize = -1; ClearTrail(); if (m_Marker != null) m_Marker.SetActive(false);
         if (m_SavedScale < 0f) { m_SavedScale = SimulationControl.ConfiguredTimeScale; SimulationControl.ConfiguredTimeScale = 1f; if (Time.timeScale > 1f) Time.timeScale = 1f; }
@@ -120,7 +129,8 @@ public class PhaseTry : Phase
         int gi = json.IndexOf("\"goal\"", StringComparison.Ordinal); string goalText = null; int n = -1;
         if (gi >= 0) { int a = json.IndexOf('[', gi), b = json.IndexOf(']', a); if (a > 0 && b > a) { goalText = json.Substring(a + 1, b - a - 1).Replace(',', ' '); n = goalText.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length; } }
         if (n > 0 && n != m_GoalSize) { m_GoalSize = n; BuildSliders(n, goalText); if (m_IsBase == 1 && goalText != null) PlaceGoalFromText(goalText); }
-        m_Plain.text = m_IsBase == 1 ? Ui.T($"誤差 {err:F3} m / 経過 {t:F1} s", $"error {err:F3} m / {t:F1} s") : Ui.T($"誤差 {err:F3} rad / 経過 {t:F1} s", $"error {err:F3} rad / {t:F1} s");
+        string unit = m_IsBase == 1 || m_IsLink ? "m" : "rad";
+        m_Plain.text = Ui.T($"誤差 {err:F3} {unit} / 経過 {t:F1} s", $"error {err:F3} {unit} / {t:F1} s");
     }
 
     void SendGoal(string goal)
@@ -137,8 +147,27 @@ public class PhaseTry : Phase
         m_Sliders.Clear();
         if (m_IsBase == 1 || n <= 0 || n > 12) return;
         TaskSpec spec = TaskSpec.Load(P.Abs(P.D.task));
-        float range = spec.Goal0.range != null && spec.Goal0.range.Length == 2 ? Mathf.Max(Mathf.Abs(spec.Goal0.range[0]), Mathf.Abs(spec.Goal0.range[1])) : 1.2f;
         string[] cur = (initial ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (m_IsLink && n == 3)
+        {
+            // 手先: 領域の中心 ± 大きさ の範囲で x, y, z を動かす
+            float[] c = spec.Goal0.region.center != null && spec.Goal0.region.center.Length == 3 ? spec.Goal0.region.center : new[] { 0.3f, 0f, 0.3f };
+            float[] sz = spec.Goal0.region.size != null && spec.Goal0.region.size.Length == 3 ? spec.Goal0.region.size : new[] { 0.2f, 0.2f, 0.2f };
+            string[] ax = { "x", "y", "z" };
+            for (int i = 0; i < 3; i++)
+            {
+                int k = i; float lo = c[i] - sz[i], hi = c[i] + sz[i];
+                var row = Ui.Row(m_SliderBox.transform, 22f);
+                var lab = Ui.Label(row.transform, "", 11f, Ui.Text, false, 0f, 90f);
+                float init = i < cur.Length && float.TryParse(cur[i], out float v) ? Mathf.Clamp(v, lo, hi) : c[i];
+                var sl = Ui.Slider(row.transform, lo, hi, init, val => { lab.text = $"{ax[k]}: {val:F3}"; m_SendAt = Time.unscaledTime + 0.15f; PlaceLinkGoal(); });
+                lab.text = $"{ax[i]}: {sl.value:F3}";
+                m_Sliders.Add(sl);
+            }
+            PlaceLinkGoal();
+            return;
+        }
+        float range = spec.Goal0.range != null && spec.Goal0.range.Length == 2 ? Mathf.Max(Mathf.Abs(spec.Goal0.range[0]), Mathf.Abs(spec.Goal0.range[1])) : 1.2f;
         for (int i = 0; i < n; i++)
         {
             int k = i;
@@ -149,6 +178,24 @@ public class PhaseTry : Phase
             lab.text = $"j{i + 1}: {sl.value:F2}";
             m_Sliders.Add(sl);
         }
+    }
+
+    /// <summary>手先の目標点 (根リンク座標系) を 3D の小さな球で示す。ROS (x, y, z) → Unity (-y, z, x)、根の姿勢は開始姿勢。</summary>
+    void PlaceLinkGoal()
+    {
+        if (m_Sliders.Count != 3) return;
+        Vector3 origin = new Vector3(-W.StartY, 0f, W.StartX); Quaternion rot = Quaternion.Euler(0f, -W.StartYawDeg, 0f);
+        Vector3 pos = origin + rot * new Vector3(-m_Sliders[1].value, m_Sliders[2].value, m_Sliders[0].value);
+        if (m_Marker == null || m_Marker.name != "LinkGoal")
+        {
+            if (m_Marker != null) UnityEngine.Object.Destroy(m_Marker);
+            m_Marker = GameObject.CreatePrimitive(PrimitiveType.Sphere); m_Marker.name = "LinkGoal";
+            UnityEngine.Object.Destroy(m_Marker.GetComponent<Collider>());
+            m_Marker.transform.localScale = Vector3.one * 0.02f;
+            var mat = new Material(Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Sprites/Default")); var c = new Color(0.3f, 0.9f, 0.4f, 0.9f);
+            mat.color = c; if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", c); m_Marker.GetComponent<Renderer>().material = mat;
+        }
+        m_Marker.transform.position = pos; m_Marker.SetActive(true);
     }
 
     string SliderGoal() { var sb = new StringBuilder(); foreach (Slider s in m_Sliders) { if (sb.Length > 0) sb.Append(' '); sb.Append(s.value.ToString("F3")); } return sb.ToString(); }

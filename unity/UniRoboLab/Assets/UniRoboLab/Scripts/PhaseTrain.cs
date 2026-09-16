@@ -210,7 +210,7 @@ public class PhaseTrain : Phase
         for (int x = 0; x < w; x++) { px[yTol * w + x] = new Color32(255, 170, 60, 255); if (yTol + 1 < h) px[(yTol + 1) * w + x] = new Color32(255, 170, 60, 255); }
         Plot(rate, new Color32(90, 220, 120, 255), 0f, 1f, 3); Plot(err, new Color32(90, 160, 255, 255), 0f, eHi, 2);
         m_CurveTex.SetPixels32(px); m_CurveTex.Apply();
-        bool isBase = spec.Goal0.type == "base_in_region"; string unit = isBase ? "m" : "rad";
+        string unit = spec.Goal0.type == "joints_near" ? "rad" : "m";
         float last = rate.Count > 0 ? rate[rate.Count - 1] : 0f;
         m_AxisTop.text = Ui.T($"縦軸: 誤差 0 〜 {eHi:F2} {unit}   橙の線: 成功の目標 {tol:g} {unit}   緑: 成功率 (今 {last * 100f:F0} %)   試行 {err.Count} 回",
                               $"y: error 0 to {eHi:F2} {unit}   orange: success target {tol:g} {unit}   green: success rate (now {last * 100f:F0} %)   {err.Count} attempts");

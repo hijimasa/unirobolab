@@ -114,6 +114,7 @@ public class PhaseRobot : Phase
         m_Info = null;
         if (!ok) { m_RobotInfo = null; m_Validation.text = Ui.T("読み取り失敗: ", "read failed: ") + text; m_Validation.color = Ui.Bad; W.RefreshStepper(); return; }
         m_RobotInfo = JsonUtility.FromJson<RobotInfo>(text);
+        try { System.IO.File.WriteAllText(System.IO.Path.Combine(P.Dir, "robot_info.json"), text); } catch (System.Exception) { }   // ② がリンク一覧に使う
         if (string.IsNullOrEmpty(m_Name.text)) m_Name.text = m_RobotInfo.name;
         if (string.IsNullOrEmpty(m_Ns.text)) m_Ns.text = m_RobotInfo.name;
         m_Base.text = (m_RobotInfo.fixed_base ? Ui.T("基体: 固定 (関節目標のタスク)", "base: fixed (joint-target tasks)") : Ui.T("基体: 移動 (地点到達のタスク)", "base: mobile (reach-a-point tasks)"))
