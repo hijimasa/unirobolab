@@ -55,3 +55,19 @@ def test_estimate_grows_with_tighter_tolerance():
     a = preset("joint_target", "x.urdf"); b = preset("joint_target", "x.urdf"); b["goal"][0]["tolerance"] = 0.025
     ta, why = estimate_time_s(a); tb, _ = estimate_time_s(b)
     assert tb > 2 * ta and "許容" in why
+
+
+def test_connection_settings_from_spec_land_in_contract(tmp_path):
+    spec = preset("joint_target", str(FIX / "servo_demo.urdf"), namespace="arm1")
+    spec["robot"].update({"command_mode": "ros2_control_commands", "controller": "pos_ctrl", "estop_topic": "/arm1/stop"})
+    spec["goal"][0]["range"] = []   # [] = auto
+    c, t = generate(spec, str(tmp_path))
+    assert c["ros"]["namespace"] == "arm1" and c["ros"]["controller_name"] == "pos_ctrl" and c["safety"]["estop_topic"] == "/arm1/stop"
+    assert t["task"]["goal_range"][1] > 0
+
+
+def test_robot_info_shape():
+    from unirobolab.draft import robot_info
+    info = robot_info(str(FIX / "servo_demo.urdf"))
+    assert info["fixed_base"] and [j["name"] for j in info["joints"]] == ["ideal_joint", "cheap_joint"]
+    assert info["joints"][0]["mode"] == "position" and info["joints"][0]["upper"] > 0

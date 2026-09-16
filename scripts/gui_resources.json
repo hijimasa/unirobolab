@@ -1,0 +1,11 @@
+{
+  "_note": "Default settings for the UniRoboLab GUI (scripts/unirobolab_gui.sh). The learning server is on; the Python environment is auto-detected (.venv) unless unirobolab.python is set.",
+  "settings": {
+    "physics_hz": 50,
+    "target_fps": 120,
+    "time_scale": 10,
+    "stepping_steps_per_frame": 8,
+    "learning_port": 10100
+  },
+  "unirobolab": {}
+}

@@ -776,3 +776,24 @@ BuildLinuxPlayer で作ったプレイヤーを使っていた。これは「汎
   全文の場所) だけを出し、全文は DEPLOY.md に置く。画面: docs/images/gui_deploy_tab.png、
   gui_try_policy.png (diffbot のマーカと軌跡)、gui_try_joints.png (servo の関節スライダ)。
 - テスト: python/tests/test_deploy.py (ros-set の編集と既定、手順書の内容: トピック、上限、起動)。
+
+## 25. GUI の作り直し: ウィザード(2026-09-16)
+
+docs/ux-flow.md v2.1 に沿って LabPanel / PolicyPanel を捨て、`unity/UniRoboLab/Assets/UniRoboLab/Scripts/` を
+LabWizard(骨格)+ Phase{Robot,Task,Train,Try,Check,Deploy} + Ui(uGUI ヘルパーと ja/en 辞書)+
+Project(プロジェクトと失効)+ Env(環境検出)+ TaskSpec(task.json の型)に組み替えた。
+
+- 起動: `scripts/unirobolab_gui.sh [プロジェクト]`。設定は scripts/gui_resources.json、学習サーバは
+  SIM_LEARNING_PORT=10100 が既定。Python は `.venv` を自動検出(UNIROBOLAB_PYTHON か unirobolab.python で上書き)。
+- プロジェクト: `<dir>/unirobolab.project.json` と task.json、generated/(契約・学習設定)、runs/<時刻>/、
+  sim2sim_out/、deploy/。最後に開いたものを `~/.config/unirobolab/recent.txt` で覚える。
+- 失効: contract ← URDF + 接続先、train ← task.json + contract、run ← train + contract、
+  report / deploy ← contract + policy.onnx。刻んだハッシュと今の入力が違えばステッパーに「!」。
+- 3D: Camera.main.rect を右 38 %(Side)/ 右 66 %(Large: 試す)/ 無効(Hidden: チェック・実機へ)に切替。
+- 撮影/ヘッドレス: SIM_WIZARD_PROJECT、SIM_WIZARD_PHASE (1..6)、SIM_WIZARD_ACTION
+  (load | next | train | run | check | deploy)、SIM_GUI_SCREENSHOT="a.png@秒,b.png@done"。
+  旧 LabPanel の SIM_*_AUTORUN は廃止。画面: docs/images/wizard/w1_robot 〜 w6_deploy.png。
+- 通し検証(servo_demo): ① URDF 読込 → ② 生成 → ③ 学習(早期終了、成功率 56%、誤差 0.050)→ ④ ライブ
+  (誤差 0.002 rad)→ ⑤ report 読込(合格)→ ⑥ パッケージ + DEPLOY.md。
+- 未実装(v2.1 の残り): ⑤ の GUI 完結(GUI のシミュレータ自身を被検体にする実行モデル)、②の 3D での
+  開始条件編集と関節目標の可視化、① の項リスト/JSON 同期、外部処理の常駐化、初回セットアップ画面。

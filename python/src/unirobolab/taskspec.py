@@ -5,7 +5,8 @@
 
     {
       "spec_version": 0,
-      "robot": {"urdf": "servo_demo.urdf", "name": "servo_demo", "namespace": "servo_demo"},
+      "robot": {"urdf": "servo_demo.urdf", "name": "servo_demo", "namespace": "servo_demo",
+                "command_mode": "joint_state_topic", "controller": "", "estop_topic": ""},
       "start": {"joints": "zero", "base": {"xy": [0, 0], "yaw_deg": [0, 0]}},
       "goal": [
         {"type": "joints_near", "range": [-1.2, 1.2], "tolerance": 0.05},
@@ -89,7 +90,7 @@ def validate(spec: dict[str, Any]) -> list[str]:
 
 def _joint_range(c: dict[str, Any], contract: dict[str, Any], train: dict[str, Any]) -> list[float]:
     rng = c.get("range", "auto")
-    if rng == "auto" or rng is None:
+    if rng == "auto" or rng is None or (isinstance(rng, list) and len(rng) == 0):   # [] = auto (GUI は空配列で書く)
         return list(train["task"].get("goal_range", [-0.5, 0.5]))   # draft: 安全範囲の 80 %
     if isinstance(rng, dict):   # 関節ごと → task.py は対称のスカラ範囲なので最小の絶対値に丸める (保守的)
         lo = max(float(v[0]) for v in rng.values()); hi = min(float(v[1]) for v in rng.values())
@@ -140,7 +141,11 @@ def generate(spec: dict[str, Any], spec_dir: str = ".") -> tuple[dict[str, Any],
     urdf = robot["urdf"]
     if not os.path.isabs(urdf):
         urdf = os.path.normpath(os.path.join(spec_dir, urdf))
-    contract, train = draft_mod.draft(urdf, robot.get("name"), robot.get("namespace"), robot.get("onnx"))
+    contract, train = draft_mod.draft(urdf, robot.get("name") or None, robot.get("namespace") or None, robot.get("onnx") or None)
+    # 実機の接続先は ① で決めた値 (仕様の robot 節) を契約に写す。⑥ では変えない
+    from .deploy import ros_set
+    ros_set(contract, command_mode=robot.get("command_mode") or None, controller=robot.get("controller") or None,
+            estop_topic=robot.get("estop_topic") or None)
     task = train["task"]
     es = train["train"].setdefault("early_stop", {})
     rate = float(contract["control"]["policy_rate_hz"])

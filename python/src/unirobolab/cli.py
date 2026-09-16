@@ -197,6 +197,10 @@ def cmd_task_gen(a) -> int:
     import json as _json
     from .taskspec import estimate_time_s, generate
     spec = _json.load(open(a.spec))
+    if a.estimate_only:
+        secs, why = estimate_time_s(spec)
+        print(_json.dumps({"estimate_s": round(secs), "estimate_why": why}, ensure_ascii=False))
+        return 0
     contract, train = generate(spec, os.path.dirname(os.path.abspath(a.spec)))
     out = a.out or os.path.dirname(os.path.abspath(a.spec))
     os.makedirs(out, exist_ok=True)
@@ -364,7 +368,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", help="output directory (default: next to the spec)")
     s.add_argument("--name", help="file stem for the contract (default: contract name)")
     s.add_argument("--schema")
+    s.add_argument("--estimate-only", action="store_true", help="print the training-time estimate only")
     s.set_defaults(fn=cmd_task_gen)
+
+    s = sub.add_parser("robot-info", help="joints, limits, base type of a URDF as JSON (for the GUI)")
+    s.add_argument("urdf")
+    s.set_defaults(fn=lambda a: (print(__import__("json").dumps(__import__("unirobolab.draft", fromlist=["robot_info"]).robot_info(a.urdf))), 0)[1])
 
     s = sub.add_parser("task-preset", help="write an example task.json (joint_target | base_target) for a URDF")
     s.add_argument("kind", choices=["joint_target", "base_target"])

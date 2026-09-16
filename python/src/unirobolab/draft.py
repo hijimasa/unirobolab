@@ -221,3 +221,26 @@ def draft(urdf_path: str, name: str | None = None, namespace: str | None = None,
                                      "net_arch": [64, 64], "log_std_init": -1.5, "eval_episodes": 3,
                                      "early_stop": early}}
     return contract, train
+
+
+def robot_info(urdf_path: str) -> dict[str, Any]:
+    """GUI の ① ロボット画面用: 関節の表と基体の種類 (JsonUtility で読める平らな形)。"""
+    root = ET.parse(urdf_path).getroot()
+    joints = _joint_info(root)
+    modes, _ = _ros2_control(root)
+    controlled = [j for j in joints if j["name"] in modes] or joints
+    fixed = _fixed_base(root)
+    sensors = {"imu": False, "odom": False}
+    for g in root.iter("sensor"):
+        t = (g.get("type") or "").lower()
+        if "imu" in t:
+            sensors["imu"] = True
+    text = ET.tostring(root, encoding="unicode").lower()
+    if "odom" in text:
+        sensors["odom"] = True
+    return {"name": root.get("name", "robot"), "fixed_base": fixed,
+            "joints": [{"name": j["name"], "type": j["type"], "mode": modes.get(j["name"], "position"),
+                        "lower": j["lower"] if j["lower"] is not None else 0.0,
+                        "upper": j["upper"] if j["upper"] is not None else 0.0,
+                        "velocity": j["velocity"] or 0.0, "effort": j["effort"] or 0.0} for j in controlled],
+            "imu": sensors["imu"], "odom": sensors["odom"]}
