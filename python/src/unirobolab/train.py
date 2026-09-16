@@ -261,7 +261,8 @@ def evaluate(model, env, episodes: int) -> dict:
 def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unity",
         transport: str = "direct", host: str = "127.0.0.1", port: int = 10100,
         n_envs: int = 1, entities: list[str] | None = None, instances: int = 1,
-        spawn_urdf: str | None = None, spawn_spacing: float = 1.0, spawn_yaw: float = 0.0) -> int:
+        spawn_urdf: str | None = None, spawn_spacing: float = 1.0, spawn_yaw: float = 0.0,
+        spawn_layout: str = "line", spawn_origin: tuple[float, float] = (0.0, 0.0)) -> int:
     from unirobolab import contract as contract_mod
     c = contract_mod.load(contract_path)
     task, train = load_config(config_path)
@@ -280,7 +281,7 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
         if not entities:
             entities = [ns] if n_envs == 1 else [f"{ns}_{i}" for i in range(n_envs)]
         envs = [DirectVecEnv(c, task, entities, host=host, port=port + k, seed=train["seed"] + 1000 * k,
-                             spawn_urdf=spawn_urdf, spawn_spacing=spawn_spacing, spawn_yaw=spawn_yaw)
+                             spawn_urdf=spawn_urdf, spawn_spacing=spawn_spacing, spawn_yaw=spawn_yaw, spawn_layout=spawn_layout, spawn_origin=spawn_origin)
                 for k in range(instances)]
         if instances == 1:
             env = envs[0]

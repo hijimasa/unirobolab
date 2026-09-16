@@ -278,7 +278,7 @@ def cmd_train(a) -> int:
     ents = a.entities.split(",") if a.entities else None
     return train.run(a.contract, a.config, a.out, a.backend, transport=a.transport,
                      host=a.host, port=a.port, n_envs=a.n_envs, entities=ents, instances=a.instances,
-                     spawn_urdf=a.spawn_urdf, spawn_spacing=a.spawn_spacing, spawn_yaw=a.spawn_yaw)
+                     spawn_urdf=a.spawn_urdf, spawn_spacing=a.spawn_spacing, spawn_yaw=a.spawn_yaw, spawn_layout=a.spawn_layout, spawn_origin=tuple(a.spawn_origin))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -430,6 +430,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--spawn-urdf", help="direct: spawn missing entities from this URDF (path as seen by the simulator)")
     s.add_argument("--spawn-spacing", type=float, default=1.0, help="metres between spawned robots (along y)")
     s.add_argument("--spawn-yaw", type=float, default=0.0)
+    s.add_argument("--spawn-layout", choices=["line", "grid"], default="line", help="how --n-envs robots are placed (grid = ceil(sqrt(n)) columns)")
+    s.add_argument("--spawn-origin", type=float, nargs=2, default=[0.0, 0.0], metavar=("X", "Y"), help="ROS x y of the first robot [m]")
     s.set_defaults(fn=cmd_train)
 
     a = p.parse_args(argv)

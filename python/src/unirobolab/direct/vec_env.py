@@ -25,7 +25,8 @@ from unirobolab.task import Task
 class DirectVecEnv(VecEnv):
     def __init__(self, c: Contract, task_cfg: dict[str, Any], entities: list[str],
                  host: str = "127.0.0.1", port: int = 10100, seed: int = 0,
-                 spawn_urdf: str | None = None, spawn_spacing: float = 1.0, spawn_yaw: float = 0.0) -> None:
+                 spawn_urdf: str | None = None, spawn_spacing: float = 1.0, spawn_yaw: float = 0.0,
+                 spawn_layout: str = "line", spawn_origin: tuple[float, float] = (0.0, 0.0)) -> None:
         self.c = c
         self.entities = list(entities)
         n = len(self.entities)
@@ -75,7 +76,13 @@ class DirectVecEnv(VecEnv):
             present = self.client.has_entities(self.entities)
             for i, (name, ok) in enumerate(zip(self.entities, present)):
                 if not ok:
-                    got = self.client.spawn(name, spawn_urdf, 0.0, i * spawn_spacing, 0.0, spawn_yaw)
+                    # line: ROS の y 方向に一列。grid: ceil(sqrt(n)) 列の格子 (並列の様子が見やすい)
+                    if spawn_layout == "grid":
+                        cols = max(1, int(np.ceil(np.sqrt(len(entities)))))
+                        sx, sy = (i // cols) * spawn_spacing, (i % cols) * spawn_spacing
+                    else:
+                        sx, sy = 0.0, i * spawn_spacing
+                    got = self.client.spawn(name, spawn_urdf, spawn_origin[0] + sx, spawn_origin[1] + sy, 0.0, spawn_yaw)
                     if got != name:
                         raise RuntimeError(f"spawned as {got!r}, expected {name!r}")
             self.client.pause()

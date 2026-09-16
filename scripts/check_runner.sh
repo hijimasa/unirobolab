@@ -44,7 +44,7 @@ if ! pgrep -f 'default_server_endpoin[t]' >/dev/null; then
 fi
 timeout 30 ros2 run simulation_ros2_utils set_sim_state --ros-args -p set_state:=start >> "$LOG" 2>&1 || fail "the simulator did not answer set_simulation_state (is it running with ROS enabled?)"
 timeout 60 ros2 run simulation_ros2_utils spawn_entity --ros-args -r spawn_entity:=/spawn_entity \
-  -p urdf_path:="$URDF" -p robot_name:="$NS" -p x:=0.0 -p y:=0.0 -p z:=0.0 -p R:=0.0 -p P:=0.0 -p Y:=${SPAWN_YAW:-0.0} >> "$LOG" 2>&1 || fail "spawn_entity failed (see $LOG)"
+  -p urdf_path:="$URDF" -p robot_name:="$NS" -p x:=${SPAWN_X:-0.0} -p y:=${SPAWN_Y:-0.0} -p z:=0.0 -p R:=0.0 -p P:=0.0 -p Y:=${SPAWN_YAW:-0.0} >> "$LOG" 2>&1 || fail "spawn_entity failed (see $LOG)"
 sleep 2
 timeout 10 ros2 topic echo "/$NS/joint_states" --once --field name >> "$LOG" 2>&1 || fail "no /$NS/joint_states from the simulator"
 
