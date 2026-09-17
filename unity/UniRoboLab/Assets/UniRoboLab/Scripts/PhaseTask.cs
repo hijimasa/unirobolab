@@ -4,15 +4,21 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-/// <summary>② タスク: 開始条件と終了条件を決める (v1: 関節が目標角に / 基体が領域内)。契約と学習設定はここで生成。</summary>
+/// <summary>② タスク: 開始条件と終了条件を決める (関節が目標角に / 手先が領域内 / 物体が領域内 / 基体が領域内)。契約と学習設定はここで生成。</summary>
 public class PhaseTask : Phase
 {
     public override string Key => "task";
     public override string Title => Ui.T("② タスク", "2 Task");
 
     TaskSpec m_Spec;
-    bool m_IsBase, m_IsLink;
-    Ui.Choice m_KindChoice;           // 固定基体: 関節目標 / 手先を領域へ
+    bool m_IsBase, m_IsLink, m_IsObject;
+    Ui.Choice m_KindChoice;           // 固定基体: 関節目標 / 手先を領域へ / 物体を領域へ
+    // object_in_region: 物体 (形・大きさ・質量)、押すリンク、開始位置 (中心とばらつき)、目標領域 (中心と大きさ)。z は地面 (0)
+    GameObject m_ObjectBox;
+    Ui.Choice m_ShapeChoice, m_HandChoice;
+    TMP_InputField m_OSx, m_OSy, m_OSz, m_OMass, m_OStartX, m_OStartY, m_OVarX, m_OVarY, m_OGx, m_OGy, m_OGsx, m_OGsy;
+    LineRenderer m_StartLine;
+    GameObject m_ObjPreview;
     GameObject m_LinkBox;
     Ui.Choice m_LinkChoice; readonly List<string> m_LinkNames = new List<string>();
     TMP_InputField m_Cx, m_Cy, m_Cz, m_Sx, m_Sy, m_Sz, m_Px, m_Py, m_Pz;
@@ -36,8 +42,8 @@ public class PhaseTask : Phase
         m_Kind = Ui.Label(Root.transform, "", 13f, Ui.Header);
         var kr = Ui.Row(Root.transform, 26f);
         Ui.Label(kr.transform, Ui.T("何をさせるか", "Task kind"), 12f, Ui.Muted, false, 0f, 110f);
-        m_KindChoice = new Ui.Choice(kr.transform, new[] { Ui.T("関節を目標角へ", "joints to target angles"), Ui.T("手先を所定の場所へ", "a link to a target region") }, 0, 24f);
-        m_KindChoice.OnChange = i => { if (m_Spec != null && !m_IsBase) SetKind(i == 1); };
+        m_KindChoice = new Ui.Choice(kr.transform, new[] { Ui.T("関節を目標角へ", "joints to target angles"), Ui.T("手先を所定の場所へ", "a link to a target region"), Ui.T("物体を所定の場所へ", "an object to a target region") }, 0, 24f);
+        m_KindChoice.OnChange = i => { if (m_Spec != null && !m_IsBase) SetKind(i); };
         Ui.Label(Root.transform, Ui.T("開始の位置と向き (ロボットはここからスタート。学習・チェックでも同じ)", "Start pose (used for training and the check as well)"), 12f, Ui.Muted);
         var sp = Ui.Row(Root.transform, 26f);
         Ui.Label(sp.transform, "x [m]", 12f, Ui.Text, false, 0f, 44f); m_StartX = Ui.Input(sp.transform, "0", 24f);
@@ -71,6 +77,26 @@ public class PhaseTask : Phase
         m_Sx = Ui.Input(sr.transform, "x", 24f); m_Sy = Ui.Input(sr.transform, "y", 24f); m_Sz = Ui.Input(sr.transform, "z", 24f);
         foreach (var f in new[] { m_Cx, m_Cy, m_Cz, m_Sx, m_Sy, m_Sz }) f.onEndEdit.AddListener(_ => Touch());
         Ui.Label(m_LinkBox.transform, Ui.T("点 (緑の球) を箱 (緑) の中へ動かすのが目標。目標は箱の中から抽選するので、点が届く範囲に置いてください", "The goal is to bring the point (green sphere) into the box; goals are sampled inside it, so keep it reachable"), 11f, Ui.Muted, true, 30f);
+        // object_in_region (物体を領域へ): 物体、押すリンク、開始位置、目標領域 (根リンク座標系 [m]、地面上)
+        m_ObjectBox = Ui.Column(Root.transform, "Object", 4f, 0, false);
+        var orow = Ui.Row(m_ObjectBox.transform, 26f);
+        Ui.Label(orow.transform, Ui.T("物体", "Object"), 12f, Ui.Text, false, 0f, 110f);
+        m_ShapeChoice = new Ui.Choice(orow.transform, new[] { Ui.T("箱", "box"), Ui.T("球", "sphere"), Ui.T("円柱", "cylinder") }, 0, 24f);
+        m_ShapeChoice.OnChange = _ => Touch();
+        var osz = Ui.Row(m_ObjectBox.transform, 26f);
+        Ui.Label(osz.transform, Ui.T("大きさ [m] / 質量 [kg]", "Size [m] / mass [kg]"), 12f, Ui.Text, false, 0f, 110f);
+        m_OSx = Ui.Input(osz.transform, "x", 24f); m_OSy = Ui.Input(osz.transform, "y", 24f); m_OSz = Ui.Input(osz.transform, "z", 24f); m_OMass = Ui.Input(osz.transform, "kg", 24f);
+        var hrow = Ui.Row(m_ObjectBox.transform, 26f);
+        Ui.Label(hrow.transform, Ui.T("押すリンク", "Pushing link"), 12f, Ui.Text, false, 0f, 110f);
+        m_HandChoice = new Ui.Choice(hrow.transform, new[] { "-" }, 0, 24f);
+        var ost = Ui.Row(m_ObjectBox.transform, 26f);
+        Ui.Label(ost.transform, Ui.T("開始位置 x, y [m] ± ばらつき", "Start x, y [m] ± spread"), 12f, Ui.Text, false, 0f, 110f);
+        m_OStartX = Ui.Input(ost.transform, "x", 24f); m_OStartY = Ui.Input(ost.transform, "y", 24f); m_OVarX = Ui.Input(ost.transform, "±x", 24f); m_OVarY = Ui.Input(ost.transform, "±y", 24f);
+        var ogl = Ui.Row(m_ObjectBox.transform, 26f);
+        Ui.Label(ogl.transform, Ui.T("目標領域 中心 x, y / 大きさ [m]", "Goal region center x, y / size [m]"), 12f, Ui.Text, false, 0f, 110f);
+        m_OGx = Ui.Input(ogl.transform, "x", 24f); m_OGy = Ui.Input(ogl.transform, "y", 24f); m_OGsx = Ui.Input(ogl.transform, "w", 24f); m_OGsy = Ui.Input(ogl.transform, "d", 24f);
+        foreach (var f in new[] { m_OSx, m_OSy, m_OSz, m_OMass, m_OStartX, m_OStartY, m_OVarX, m_OVarY, m_OGx, m_OGy, m_OGsx, m_OGsy }) f.onEndEdit.AddListener(_ => Touch());
+        Ui.Label(m_ObjectBox.transform, Ui.T("物体 (橙) は開始の枠 (橙) の中に置かれ、緑の枠へ押し込めば成功。手先の姿勢や関節角は問いません。枠は根リンク座標系で、地面の上にあります", "The object (orange) starts inside the orange frame; pushing it into the green frame is success. Hand pose and joint angles do not matter. Frames are in the root-link frame, on the ground"), 11f, Ui.Muted, true, 44f);
         // base_in_region
         m_BaseBox = Ui.Column(Root.transform, "Base", 4f, 0, false);
         m_RMinL = Ui.Label(m_BaseBox.transform, "", 12f, Ui.Text);
@@ -79,7 +105,7 @@ public class PhaseTask : Phase
         m_RMax = Ui.Slider(m_BaseBox.transform, 0.4f, 6f, 2.5f, v => { if (m_RMin != null && m_RMin.value > v - 0.2f) m_RMin.value = v - 0.2f; m_RMaxL.text = Ui.T($"目標地点: 開始位置から {v:F1} m 以内 (環の中から抽選)", $"goal: within {v:F1} m of the start (sampled in the ring)"); Touch(); });
         // common
         m_TolL = Ui.Label(Root.transform, "", 12f, Ui.Text);
-        m_Tol = Ui.Slider(Root.transform, 0.01f, 0.5f, 0.05f, v => { m_TolL.text = m_IsBase || m_IsLink ? Ui.T($"成功: 目標から {v:F3} m 以内", $"success: within {v:F3} m") : Ui.T($"成功: 目標角から {v:F3} rad 以内", $"success: within {v:F3} rad"); Touch(); });
+        m_Tol = Ui.Slider(Root.transform, 0.01f, 0.5f, 0.05f, v => { m_TolL.text = m_IsBase || m_IsLink || m_IsObject ? Ui.T($"成功: 目標から {v:F3} m 以内", $"success: within {v:F3} m") : Ui.T($"成功: 目標角から {v:F3} rad 以内", $"success: within {v:F3} rad"); Touch(); });
         m_TimeL = Ui.Label(Root.transform, "", 12f, Ui.Text);
         m_Time = Ui.Slider(Root.transform, 0.5f, 30f, 2f, v => { m_TimeL.text = Ui.T($"1 回の制限時間: {v:F1} 秒", $"time per attempt: {v:F1} s"); Touch(); });
         m_Estimate = Ui.Label(Root.transform, "", 12f, Ui.Accent, true, 40f);
@@ -118,12 +144,27 @@ public class PhaseTask : Phase
         SpecGoal g = m_Spec.Goal0;
         m_IsBase = g.type == "base_in_region";
         m_IsLink = g.type == "link_near";
+        m_IsObject = g.type == "object_in_region";
         m_Kind.text = m_IsBase ? Ui.T("このロボットは移動基体: 「所定の場所へ動く」タスク", "Mobile base: a reach-a-point task")
                                : Ui.T("このロボットは固定基体", "Fixed base");
         m_KindChoice.Buttons[0].transform.parent.gameObject.SetActive(!m_IsBase);
         LoadLinks();
-        m_KindChoice.Set(m_IsLink ? 1 : 0);
-        m_JointBox.SetActive(!m_IsBase && !m_IsLink); m_LinkBox.SetActive(m_IsLink); m_BaseBox.SetActive(m_IsBase);
+        m_KindChoice.Set(m_IsObject ? 2 : (m_IsLink ? 1 : 0));
+        m_JointBox.SetActive(!m_IsBase && !m_IsLink && !m_IsObject); m_LinkBox.SetActive(m_IsLink); m_ObjectBox.SetActive(m_IsObject); m_BaseBox.SetActive(m_IsBase);
+        if (m_IsObject)
+        {
+            SpecObject o = m_Spec.Object0;
+            m_ShapeChoice.Set(o.shape == "sphere" ? 1 : (o.shape == "cylinder" ? 2 : 0));
+            float[] os = o.size != null && o.size.Length == 3 ? o.size : new[] { 0.05f, 0.05f, 0.05f };
+            m_OSx.text = os[0].ToString("F3"); m_OSy.text = os[1].ToString("F3"); m_OSz.text = os[2].ToString("F3"); m_OMass.text = o.mass.ToString("F2");
+            int hi = m_LinkNames.IndexOf(g.hand); m_HandChoice.Set(hi >= 0 ? hi : Mathf.Max(0, m_LinkNames.Count - 1));
+            float[] sc = o.start != null && o.start.center != null && o.start.center.Length == 3 ? o.start.center : new[] { 0.3f, 0f, 0f };
+            float[] sv = o.start != null && o.start.size != null && o.start.size.Length == 3 ? o.start.size : new[] { 0.1f, 0.1f, 0f };
+            m_OStartX.text = sc[0].ToString("F3"); m_OStartY.text = sc[1].ToString("F3"); m_OVarX.text = (0.5f * sv[0]).ToString("F3"); m_OVarY.text = (0.5f * sv[1]).ToString("F3");
+            float[] gc = g.region.center != null && g.region.center.Length == 3 ? g.region.center : new[] { 0.5f, 0f, 0f };
+            float[] gs = g.region.size != null && g.region.size.Length == 3 ? g.region.size : new[] { 0.2f, 0.2f, 0f };
+            m_OGx.text = gc[0].ToString("F3"); m_OGy.text = gc[1].ToString("F3"); m_OGsx.text = gs[0].ToString("F3"); m_OGsy.text = gs[1].ToString("F3");
+        }
         if (m_IsLink)
         {
             int li = m_LinkNames.IndexOf(g.link); if (li >= 0) m_LinkChoice.Set(li);
@@ -134,7 +175,7 @@ public class PhaseTask : Phase
             m_Px.text = pt[0].ToString("F3"); m_Py.text = pt[1].ToString("F3"); m_Pz.text = pt[2].ToString("F3");
             m_Sx.text = sz[0].ToString("F3"); m_Sy.text = sz[1].ToString("F3"); m_Sz.text = sz[2].ToString("F3");
         }
-        m_Tol.minValue = m_IsBase ? 0.05f : 0.005f; m_Tol.maxValue = m_IsBase || m_IsLink ? 1f : 0.5f;
+        m_Tol.minValue = m_IsBase ? 0.05f : 0.005f; m_Tol.maxValue = m_IsBase || m_IsLink || m_IsObject ? 1f : 0.5f;
         m_Tol.value = g.tolerance > 0f ? g.tolerance : (m_IsBase ? 0.15f : 0.05f);
         m_Time.value = m_Spec.episode.time_s > 0f ? m_Spec.episode.time_s : (m_IsBase ? 10f : 2f);
         if (m_IsBase) { m_RMin.value = g.region.r_min; m_RMax.value = g.region.r_max; }
@@ -159,20 +200,44 @@ public class PhaseTask : Phase
             g.region.shape = "box"; g.region.center = new[] { F(m_Cx, 0.3f), F(m_Cy, 0f), F(m_Cz, 0.3f) }; g.region.size = new[] { F(m_Sx, 0.2f), F(m_Sy, 0.2f), F(m_Sz, 0.2f) };
             g.point = new[] { F(m_Px, 0f), F(m_Py, 0f), F(m_Pz, 0f) };
         }
+        else if (m_IsObject)
+        {
+            SpecObject o = m_Spec.Object0;
+            o.shape = m_ShapeChoice.Index == 1 ? "sphere" : (m_ShapeChoice.Index == 2 ? "cylinder" : "box");
+            o.size = new[] { F(m_OSx, 0.05f), F(m_OSy, 0.05f), F(m_OSz, 0.05f) }; o.mass = Mathf.Max(0.001f, F(m_OMass, 0.1f));
+            if (o.start == null) o.start = new SpecObjectStart();
+            o.start.center = new[] { F(m_OStartX, 0.3f), F(m_OStartY, 0f), 0f }; o.start.size = new[] { 2f * Mathf.Abs(F(m_OVarX, 0.05f)), 2f * Mathf.Abs(F(m_OVarY, 0.05f)), 0f };
+            g.type = "object_in_region"; g.@object = o.name; g.hand = m_LinkNames.Count > 0 && m_LinkNames[0] != "-" ? m_LinkNames[m_HandChoice.Index] : "";
+            g.region.shape = "box"; g.region.center = new[] { F(m_OGx, 0.5f), F(m_OGy, 0f), 0f }; g.region.size = new[] { Mathf.Abs(F(m_OGsx, 0.2f)), Mathf.Abs(F(m_OGsy, 0.2f)), 0f };
+        }
         else { g.type = "joints_near"; g.range = m_RangeMode.Index == 1 ? new[] { -m_Range.value, m_Range.value } : new float[0]; }
         m_Spec.Save(P.Abs(P.D.task));
     }
 
     static float F(TMP_InputField f, float d) => float.TryParse(f.text, out float v) ? v : d;
 
-    /// <summary>種類の切替 (固定基体): 関節目標 ↔ 手先を領域へ。</summary>
-    void SetKind(bool link)
+    /// <summary>種類の切替 (固定基体): 0 関節目標 / 1 手先を領域へ / 2 物体を領域へ。</summary>
+    void SetKind(int kind)
     {
-        m_IsLink = link;
-        m_JointBox.SetActive(!link); m_LinkBox.SetActive(link);
-        m_Tol.maxValue = link ? 1f : 0.5f;
-        if (link && m_Spec.Goal0.type != "link_near") { m_Tol.value = 0.03f; m_Time.value = 3f; }
-        else if (!link && m_Spec.Goal0.type != "joints_near") { m_Tol.value = 0.05f; m_Time.value = 2f; }
+        m_IsLink = kind == 1; m_IsObject = kind == 2;
+        m_JointBox.SetActive(kind == 0); m_LinkBox.SetActive(m_IsLink); m_ObjectBox.SetActive(m_IsObject);
+        m_Tol.maxValue = kind == 0 ? 0.5f : 1f;
+        string t = m_Spec.Goal0.type;
+        if (m_IsLink && t != "link_near") { m_Tol.value = 0.03f; m_Time.value = 3f; }
+        else if (m_IsObject && t != "object_in_region")
+        {
+            m_Tol.value = 0.05f; m_Time.value = 6f;
+            if (m_Spec.objects.Count == 0)
+            {
+                // 初期値: 物体は手先の届く範囲の手前、目標はその先 (押すリンクの先端の距離を目安に)
+                float[] tip = TipOf(m_LinkNames.Count > 0 ? m_LinkNames[Mathf.Max(0, m_LinkNames.Count - 1)] : null);
+                float r = Mathf.Max(0.2f, 0.8f * Mathf.Sqrt(tip[0] * tip[0] + tip[1] * tip[1] + tip[2] * tip[2]));
+                m_OStartX.text = (0.6f * r).ToString("F3"); m_OStartY.text = "0.000"; m_OVarX.text = "0.030"; m_OVarY.text = "0.030";
+                m_OGx.text = r.ToString("F3"); m_OGy.text = "0.000"; m_OGsx.text = "0.120"; m_OGsy.text = "0.120";
+                m_OSx.text = m_OSy.text = m_OSz.text = "0.050"; m_OMass.text = "0.10"; m_HandChoice.Set(Mathf.Max(0, m_LinkNames.Count - 1));
+            }
+        }
+        else if (kind == 0 && t != "joints_near") { m_Tol.value = 0.05f; m_Time.value = 2f; }
         m_Tol.onValueChanged.Invoke(m_Tol.value);
         Touch();
     }
@@ -195,6 +260,12 @@ public class PhaseTask : Phase
         m_LinkChoice.Buttons[0].transform.parent.SetSiblingIndex(row.GetSiblingIndex());
         UnityEngine.Object.Destroy(row.gameObject);
         m_LinkChoice.OnChange = i => { if (m_LinkNames.Count > 0 && m_Px != null) { float[] t = TipOf(m_LinkNames[i]); m_Px.text = t[0].ToString("F3"); m_Py.text = t[1].ToString("F3"); m_Pz.text = t[2].ToString("F3"); } Touch(); };
+        Transform hrow = m_HandChoice.Buttons[0].transform.parent;
+        int hidx = hrow.GetSiblingIndex(); Transform hparent = hrow.parent;
+        UnityEngine.Object.Destroy(hrow.gameObject);
+        m_HandChoice = new Ui.Choice(hparent, m_LinkNames.ToArray(), Mathf.Max(0, m_LinkNames.Count - 1), 24f);
+        m_HandChoice.Buttons[0].transform.parent.SetSiblingIndex(hidx);
+        m_HandChoice.OnChange = _ => Touch();
     }
 
     float[] TipOf(string link) => link != null && m_LinkTips.TryGetValue(link, out float[] t) && t != null && t.Length == 3 ? t : new[] { 0f, 0f, 0f };
@@ -253,6 +324,9 @@ public class PhaseTask : Phase
     {
         if (m_BoxLine != null) m_BoxLine.enabled = false;
         if (m_PointMarker != null) m_PointMarker.SetActive(false);
+        if (m_StartLine != null) m_StartLine.enabled = false;
+        if (m_ObjPreview != null) m_ObjPreview.SetActive(false);
+        if (m_IsObject) { if (m_RingIn != null) { m_RingIn.enabled = false; m_RingOut.enabled = false; } foreach (LineRenderer a in m_Arcs) a.enabled = false; DrawObjectScene(); return; }
         if (m_IsLink) { if (m_RingIn != null) { m_RingIn.enabled = false; m_RingOut.enabled = false; } foreach (LineRenderer a in m_Arcs) a.enabled = false; DrawLinkBox(); return; }
         if (!m_IsBase) { if (m_RingIn != null) { m_RingIn.enabled = false; m_RingOut.enabled = false; } DrawJointArcs(); return; }
         foreach (LineRenderer a in m_Arcs) a.enabled = false;
@@ -348,6 +422,45 @@ public class PhaseTask : Phase
         if (cam != null) { cam.target = U(c.x, c.y, c.z); cam.distance = Mathf.Max(0.8f, h.magnitude * 6f); }
     }
 
+    /// <summary>物体タスク: 開始の枠 (橙)、物体のプレビュー (橙、開始位置の中心)、目標の枠 (緑) を地面に描く。根リンク座標系 → Unity は DrawLinkBox と同じ。</summary>
+    void DrawObjectScene()
+    {
+        Vector3 origin = new Vector3(-W.StartY, 0f, W.StartX); Quaternion rot = Quaternion.Euler(0f, -W.StartYawDeg, 0f);
+        Vector3 U(float x, float y, float z) => origin + rot * new Vector3(-y, z, x);
+        void Rect(LineRenderer lr, float cx, float cy, float hx, float hy)
+        {
+            var pts = new[] { U(cx - hx, cy - hy, 0.005f), U(cx + hx, cy - hy, 0.005f), U(cx + hx, cy + hy, 0.005f), U(cx - hx, cy + hy, 0.005f) };
+            lr.loop = true; lr.positionCount = 4; lr.SetPositions(pts); lr.enabled = true;
+        }
+        if (m_BoxLine == null) { m_BoxLine = MakeRing("LinkGoalBox"); m_BoxLine.startWidth = m_BoxLine.endWidth = 0.008f; }
+        if (m_StartLine == null)
+        {
+            m_StartLine = MakeRing("ObjectStartBox"); m_StartLine.startWidth = m_StartLine.endWidth = 0.008f;
+            var oc = new Color(1f, 0.6f, 0.2f, 0.9f); m_StartLine.material.color = oc; if (m_StartLine.material.HasProperty("_BaseColor")) m_StartLine.material.SetColor("_BaseColor", oc);
+        }
+        float gx = F(m_OGx, 0.5f), gy = F(m_OGy, 0f), ghx = 0.5f * Mathf.Abs(F(m_OGsx, 0.2f)), ghy = 0.5f * Mathf.Abs(F(m_OGsy, 0.2f));
+        float sx = F(m_OStartX, 0.3f), sy = F(m_OStartY, 0f), shx = Mathf.Abs(F(m_OVarX, 0.05f)), shy = Mathf.Abs(F(m_OVarY, 0.05f));
+        Rect(m_BoxLine, gx, gy, Mathf.Max(ghx, 0.01f), Mathf.Max(ghy, 0.01f));
+        Rect(m_StartLine, sx, sy, Mathf.Max(shx, 0.01f), Mathf.Max(shy, 0.01f));
+        // 物体のプレビュー: 形と大きさどおりの原始形状 (物理なし)
+        PrimitiveType pt = m_ShapeChoice.Index == 1 ? PrimitiveType.Sphere : (m_ShapeChoice.Index == 2 ? PrimitiveType.Cylinder : PrimitiveType.Cube);
+        if (m_ObjPreview == null || m_ObjPreview.name != "ObjectPreview" + pt)
+        {
+            if (m_ObjPreview != null) UnityEngine.Object.Destroy(m_ObjPreview);
+            m_ObjPreview = GameObject.CreatePrimitive(pt); m_ObjPreview.name = "ObjectPreview" + pt;
+            UnityEngine.Object.Destroy(m_ObjPreview.GetComponent<Collider>());
+            var mat = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Sprites/Default")); var oc = new Color(0.95f, 0.55f, 0.2f, 1f);
+            mat.color = oc; if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", oc); m_ObjPreview.GetComponent<Renderer>().material = mat;
+        }
+        float ox = Mathf.Abs(F(m_OSx, 0.05f)), oy = Mathf.Abs(F(m_OSy, 0.05f)), oz = Mathf.Abs(F(m_OSz, 0.05f));
+        float h = m_ShapeChoice.Index == 1 ? 2f * ox : (m_ShapeChoice.Index == 2 ? oy : oz);   // 球: size[0] は半径、円柱: (半径, 高さ)
+        m_ObjPreview.transform.localScale = m_ShapeChoice.Index == 1 ? Vector3.one * 2f * ox : (m_ShapeChoice.Index == 2 ? new Vector3(2f * ox, 0.5f * oy, 2f * ox) : new Vector3(oy, oz, ox));
+        m_ObjPreview.transform.position = U(sx, sy, 0.5f * h); m_ObjPreview.transform.rotation = rot;
+        m_ObjPreview.SetActive(true);
+        var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
+        if (cam != null) { cam.target = U(0.5f * (sx + gx), 0.5f * (sy + gy), 0f); cam.distance = Mathf.Max(1.2f, 2.5f * Vector2.Distance(new Vector2(sx, sy), new Vector2(gx, gy)) + 0.8f); }
+    }
+
     /// <summary>「自動」のときの目標範囲 (可動範囲の 80 %) を表示用に見積もる: 生成された学習設定があればそれ、無ければ 1.0。</summary>
     float AutoRange()
     {
@@ -367,6 +480,8 @@ public class PhaseTask : Phase
         foreach (LineRenderer a in m_Arcs) a.enabled = false;
         if (m_BoxLine != null) m_BoxLine.enabled = false;
         if (m_PointMarker != null) m_PointMarker.SetActive(false);
+        if (m_StartLine != null) m_StartLine.enabled = false;
+        if (m_ObjPreview != null) m_ObjPreview.SetActive(false);
     }
     public override void Action(string name) { if (name == "next") OnNext(); }
 }

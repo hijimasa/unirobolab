@@ -16,7 +16,7 @@ public class PhaseTry : Phase
     TMP_Text m_Plain, m_Raw, m_GoalL;
     GameObject m_SliderBox; readonly List<Slider> m_Sliders = new List<Slider>();
     ExternalProcess m_Proc;
-    bool m_Picking, m_Running, m_IsLink; int m_IsBase = -1, m_GoalSize = -1; float m_SendAt = -1f, m_SavedScale = -1f, m_TrailAt;
+    bool m_Picking, m_Running, m_IsLink, m_IsObject; string m_ObjectName; Button m_ResetObj; int m_IsBase = -1, m_GoalSize = -1; float m_SendAt = -1f, m_SavedScale = -1f, m_TrailAt;
     GameObject m_Marker; LineRenderer m_Trail; readonly List<Vector3> m_TrailPts = new List<Vector3>();
     string m_Entity; readonly StringBuilder m_RawBuf = new StringBuilder();
 
@@ -45,8 +45,12 @@ public class PhaseTry : Phase
         TaskSpec spec = TaskSpec.Load(P.Abs(P.D.task));
         m_IsBase = spec.Goal0.type == "base_in_region" ? 1 : 0;
         m_IsLink = spec.Goal0.type == "link_near";
+        m_IsObject = spec.Goal0.type == "object_in_region"; m_ObjectName = m_IsObject ? spec.Object0.name : null;
         m_Pick.gameObject.SetActive(m_IsBase == 1); m_GoalL.gameObject.SetActive(m_IsBase == 0); m_SliderBox.SetActive(m_IsBase == 0);
-        m_GoalL.text = m_IsLink ? Ui.T("目標の位置 (根リンク座標系 [m])", "Goal position (root-link frame [m])") : Ui.T("目標 (関節ごと)", "Goal (per joint)");
+        m_GoalL.text = m_IsObject ? Ui.T("物体の目標位置 (根リンク座標系 [m])", "Object goal position (root-link frame [m])")
+                     : m_IsLink ? Ui.T("目標の位置 (根リンク座標系 [m])", "Goal position (root-link frame [m])") : Ui.T("目標 (関節ごと)", "Goal (per joint)");
+        if (m_ResetObj == null) m_ResetObj = Ui.Btn(Root.transform, Ui.T("物体を開始位置へ戻す", "Put the object back at its start"), () => { if (m_Proc != null && !m_Proc.HasExited && m_ObjectName != null) m_Proc.WriteLine("object " + m_ObjectName); }, 0f, 26f);
+        m_ResetObj.gameObject.SetActive(m_IsObject);
         EnsureEntity();
         W.Status(Ui.T("「動かす」を押してください", "Press Run"));
     }
@@ -55,7 +59,7 @@ public class PhaseTry : Phase
     void EnsureEntity()
     {
         var buf = new List<GameObject>(); W.Sim.GetEntitiesSnapshot(buf);
-        foreach (GameObject e in buf) if (e != null) { m_Entity = e.name; break; }
+        foreach (GameObject e in buf) if (e != null && !e.name.Contains("__")) { m_Entity = e.name; break; }   // "__" は物体 (<ロボット>__<物体>)
         if (string.IsNullOrEmpty(m_Entity) && W.Sim.CanSpawnFromGui)
         {
             if (W.Sim.TrySpawnRobotFromUrdf(P.Abs(P.D.urdf), out string name, out _)) { m_Entity = name; W.PlaceSpawned(name); }
@@ -77,11 +81,12 @@ public class PhaseTry : Phase
         var cmd = new StringBuilder(runner).Append(' ').Append(ExternalProcess.Quote(P.Abs(P.D.contract)))
             .Append(" --onnx ").Append(ExternalProcess.Quote(P.OnnxPath)).Append(" --entity ").Append(ExternalProcess.Quote(m_Entity))
             .Append(" --port ").Append(Env.LearningPort());
-        if (m_IsLink)
+        if (m_IsLink || m_IsObject)
         {
-            // 手先: 最初の目標は領域の中心 (0 のままでは届かない点を目標にしてしまう)
+            // 手先・物体: 最初の目標は領域の中心 (0 のままでは届かない点を目標にしてしまう)
             TaskSpec sp = TaskSpec.Load(P.Abs(P.D.task)); float[] c = sp.Goal0.region.center;
             if (c != null && c.Length == 3) cmd.Append(" --goal ").Append($"{c[0]:F3},{c[1]:F3},{c[2]:F3}");
+            if (m_IsObject) cmd.Append(" --objects-from ").Append(ExternalProcess.Quote(P.Abs(P.D.task)));   // 物体は live が <ロボット>__<物体> としてスポーンし開始位置へ置く
         }
         cmd.Append(" 2>&1");
         m_Proc = W.Launch(cmd.ToString());
@@ -129,7 +134,7 @@ public class PhaseTry : Phase
         int gi = json.IndexOf("\"goal\"", StringComparison.Ordinal); string goalText = null; int n = -1;
         if (gi >= 0) { int a = json.IndexOf('[', gi), b = json.IndexOf(']', a); if (a > 0 && b > a) { goalText = json.Substring(a + 1, b - a - 1).Replace(',', ' '); n = goalText.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length; } }
         if (n > 0 && n != m_GoalSize) { m_GoalSize = n; BuildSliders(n, goalText); if (m_IsBase == 1 && goalText != null) PlaceGoalFromText(goalText); }
-        string unit = m_IsBase == 1 || m_IsLink ? "m" : "rad";
+        string unit = m_IsBase == 1 || m_IsLink || m_IsObject ? "m" : "rad";
         m_Plain.text = Ui.T($"誤差 {err:F3} {unit} / 経過 {t:F1} s", $"error {err:F3} {unit} / {t:F1} s");
     }
 
@@ -148,9 +153,9 @@ public class PhaseTry : Phase
         if (m_IsBase == 1 || n <= 0 || n > 12) return;
         TaskSpec spec = TaskSpec.Load(P.Abs(P.D.task));
         string[] cur = (initial ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (m_IsLink && n == 3)
+        if ((m_IsLink || m_IsObject) && n == 3)
         {
-            // 手先: 領域の中心 ± 大きさ の範囲で x, y, z を動かす
+            // 手先・物体: 領域の中心 ± 大きさ の範囲で x, y, z を動かす (物体は z を固定)
             float[] c = spec.Goal0.region.center != null && spec.Goal0.region.center.Length == 3 ? spec.Goal0.region.center : new[] { 0.3f, 0f, 0.3f };
             float[] sz = spec.Goal0.region.size != null && spec.Goal0.region.size.Length == 3 ? spec.Goal0.region.size : new[] { 0.2f, 0.2f, 0.2f };
             string[] ax = { "x", "y", "z" };
@@ -160,6 +165,7 @@ public class PhaseTry : Phase
                 var row = Ui.Row(m_SliderBox.transform, 22f);
                 var lab = Ui.Label(row.transform, "", 11f, Ui.Text, false, 0f, 90f);
                 float init = i < cur.Length && float.TryParse(cur[i], out float v) ? Mathf.Clamp(v, lo, hi) : c[i];
+                if (m_IsObject && i == 2) { lo = hi = c[2]; row.SetActive(false); }
                 var sl = Ui.Slider(row.transform, lo, hi, init, val => { lab.text = $"{ax[k]}: {val:F3}"; m_SendAt = Time.unscaledTime + 0.15f; PlaceLinkGoal(); });
                 lab.text = $"{ax[i]}: {sl.value:F3}";
                 m_Sliders.Add(sl);
@@ -186,12 +192,13 @@ public class PhaseTry : Phase
         if (m_Sliders.Count != 3) return;
         Vector3 origin = new Vector3(-W.StartY, 0f, W.StartX); Quaternion rot = Quaternion.Euler(0f, -W.StartYawDeg, 0f);
         Vector3 pos = origin + rot * new Vector3(-m_Sliders[1].value, m_Sliders[2].value, m_Sliders[0].value);
-        if (m_Marker == null || m_Marker.name != "LinkGoal")
+        string want = m_IsObject ? "ObjectGoal" : "LinkGoal";
+        if (m_Marker == null || m_Marker.name != want)
         {
             if (m_Marker != null) UnityEngine.Object.Destroy(m_Marker);
-            m_Marker = GameObject.CreatePrimitive(PrimitiveType.Sphere); m_Marker.name = "LinkGoal";
+            m_Marker = GameObject.CreatePrimitive(m_IsObject ? PrimitiveType.Cylinder : PrimitiveType.Sphere); m_Marker.name = want;
             UnityEngine.Object.Destroy(m_Marker.GetComponent<Collider>());
-            m_Marker.transform.localScale = Vector3.one * 0.02f;
+            m_Marker.transform.localScale = m_IsObject ? new Vector3(0.12f, 0.004f, 0.12f) : Vector3.one * 0.02f;   // 物体: 地面の円盤
             var mat = new Material(Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Sprites/Default")); var c = new Color(0.3f, 0.9f, 0.4f, 0.9f);
             mat.color = c; if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", c); m_Marker.GetComponent<Renderer>().material = mat;
         }

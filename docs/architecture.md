@@ -829,3 +829,48 @@ Project(プロジェクトと失効)+ Env(環境検出)+ TaskSpec(task.json の�
   (根リンク座標系 [m])、3D に緑の箱。目標は箱の中から抽選するので、届く範囲に置く必要がある。
 - 未対応: sim2sim の判定は関節目標と地点到達のみ (手先の条件は joint_states から FK で判定する枠を足す)、
   移動基体のロボットでの link_near、条件の複数指定 (同種は 1 つまで、関節目標と手先は同時不可)。
+
+## 27. 物体を動かすタスク(押す・運ぶ、2026-09-17)
+
+「手先の姿勢や関節角は問わず、環境中の物体を所定の場所へ動かす」タスクへの対応。先に押す (paddle で
+床の物体を押す) を通し、把持は後回し。
+
+- **物体はシミュレータ上の独立したエンティティ**: objects.py が task.json の `objects[]`(name, shape
+  box|sphere|cylinder, size, mass, color)から 1 リンクの URDF を書き、学習サーバの SPAWN で
+  `<ロボット>__<物体>` としてスポーンする。学習サーバ (シミュレータ側 SimulationLearningServer) は
+  関節を持たないエンティティも STEP/RESET に含められる (関節 0 個 + 基体の姿勢・速度)。新設の
+  **SET_POSE (op 8)** で基体を (x, y, z, yaw) へ置き直し、記録しているスポーン姿勢も更新するので、
+  以後の RESET はそこへ戻る。DirectVecEnv はエピソードごとに `objects[].start`(根リンク座標系の
+  中心 ± size/2、yaw_deg の範囲)から抽選して置く。
+- **条件 `object_in_region`**(task.py): 物体の位置 (根リンク座標系、planar = 高さ無視) が箱/球の領域内。
+  報酬は progress / distance / reached に加え、`reach`(押すリンクの chain と点、対象物体)があれば
+  手先→物体の距離の減り分 `reach_progress` と距離 `reach_distance` を足す (触りに行く誘導)。
+- **契約の観測ソース** `object_position`(size 3、spec `object`)、`object_goal`(size 3、目標 − 物体)。
+  `ros.object_topics[名前]` に実機での物体位置トピック (PoseStamped、ロボットの根リンク座標系) を置く。
+  policy_node はそれを購読し、届くまでは指令しない (観測の鮮度にも含める)。deploy-guide は接続表に
+  「物体の位置」行を出す。
+- **task-gen**: `goal[0].type == "object_in_region"`(object、region、tolerance、任意で hand = 押すリンク)
+  で観測を q, qd, hand の link_position, object_position, object_goal, prev_a に組み替える。
+  `task-preset push_object` が例。
+- **④ 試す**(direct/live.py): `--objects-from task.json` で物体を `<entity>__<名前>` として用意し
+  (無ければスポーン)、開始位置の中心へ置いて一緒に観測する。stdin の `object <名前> [x y [yaw]]` で
+  置き直し。GUI は「物体を開始位置へ戻す」ボタンと、目標 (x, y) のスライダ + 地面の緑の円盤。
+- **⑤ 配備前チェック**(ros2/sim2sim.py): scenario-default が task.json から `objects` と 3 つの目標点
+  (領域内) を書く。sim2sim は simulation_interfaces の spawn_entity / get_entity_state /
+  set_entity_state で物体をスポーンし、目標ごとに開始位置へ置き直し、物体の姿勢を根リンク座標系に
+  直して契約の物体トピックへ再配信する (実機のカメラ・モーキャプの代わり)。判定は整定窓での
+  物体位置と目標の平面距離。
+- **GUI ②**: 固定基体で「物体を所定の場所へ」を選ぶと、物体 (形・大きさ・質量)、押すリンク、
+  開始位置 (中心 ± ばらつき)、目標領域 (中心と大きさ) を入力でき、3D には開始の枠 (橙)、物体の
+  プレビュー (橙)、目標の枠 (緑) を地面に描く。
+- **シミュレータ側の修正 (根本原因)**: `joint_commands_topic` を書かない URDF では指令購読の既定が
+  `/joint_states` で、状態配信と同名だった。ROS-TCP-Connector は publish したメッセージを同一プロセス
+  内の購読者にも配るため、ロボットが自分の状態を指令として受け取り「目標 = 現在位置」で固まり、
+  学習サーバの STEP の position 指令も毎ステップ上書きされていた (押す腕の fixture が動かなかった
+  原因)。既定を `/joint_command` に変更。
+- **fixture** `python/tests/fixtures/arm2_planar.urdf`: 2 自由度の平面腕 (z 軸回り、リンクは基体の
+  上を通り、先端に接線向きの paddle)。関節速度 2 rad/s に落として、掃うだけで物体を弾き飛ばさない。
+- 未対応・課題: 把持 (物体を持ち上げる・離す)、物体の向きの条件、複数物体、移動基体での物体タスク、
+  実機での物体位置の推定 (カメラ・マーカ) はユーザーの用意。押すタスクの学習は探索が難しく、
+  絶対位置の関節目標 (scale ±1 rad) だと乱雑な掃いで物体を弾いてしまう。増分 (delta) の行動モードや
+  「物体の後ろへ回る」誘導など報酬設計の改良が要る。

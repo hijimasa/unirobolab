@@ -78,6 +78,7 @@ public class LabWizard : MonoBehaviour
         P = Project.Open(dir);
         m_Phases.Add(new PhaseRobot()); m_Phases.Add(new PhaseTask()); m_Phases.Add(new PhaseTrain());
         m_Phases.Add(new PhaseTry()); m_Phases.Add(new PhaseCheck()); m_Phases.Add(new PhaseDeploy());
+        foreach (Phase phase in m_Phases) phase.W = this;   // UI を組まないヘッドレスでも CanEnter 等が P を使う
         if (!Application.isBatchMode || Environment.GetEnvironmentVariable("SIM_WIZARD_PHASE") != null || Environment.GetEnvironmentVariable("SIM_GUI_SCREENSHOT") != null) BuildUi();
         m_EnvPy = Launch(Env.PythonCheckCommand());
         m_EnvRos = Launch(Env.Ros2CheckCommand());
@@ -161,6 +162,7 @@ public class LabWizard : MonoBehaviour
     // ------------------------------------------------------------------ phases
     public void GoTo(int index, bool silent)
     {
+        if (m_Root == null && Environment.GetEnvironmentVariable("SIM_WIZARD_PHASE") == null) { m_Current = 0; return; }   // 純粋なヘッドレス (学習サーバだけ使う) では何もしない
         index = Mathf.Clamp(index, 0, m_Phases.Count - 1);
         if (index != m_Current && index > 0 && !m_Phases[index].CanEnter(out string why))
         {
