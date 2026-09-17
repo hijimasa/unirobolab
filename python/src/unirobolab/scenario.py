@@ -29,7 +29,7 @@ def default_scenario(contract: dict[str, Any], spec: dict[str, Any] | None = Non
         note = f"auto: 3 goal points inside the task's region for object '{obj}' (root-link frame), tolerance {tol:g} m = 1.5 x the training tolerance"
         return {"_note": note, "goals": goals, "hold_s": hold, "settle_window_s": 1.0, "warmup_s": 3.0,
                 "default_tolerance": tol, "rate_tolerance": 0.15, "max_obs_age_s": round(3.0 / rate, 3),
-                "objects": objects, "object": obj,
+                "objects": objects, "object": obj, "reset_between_goals": True,
                 "estop_test": {"at_s": 1.0, "release_at_s": 3.0, "hold_s": 6.0}}
     if goal.get("type") == "link_near" or any(t == "link_goal" for t in obs_src):
         region = goal.get("region") or {}

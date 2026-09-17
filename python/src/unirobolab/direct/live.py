@@ -64,10 +64,8 @@ class LivePolicy:
         # 物体 (押す・運ぶ対象): 契約の object_* 項が参照する物体を <entity>__<name> として用意し、
         # ロボットと一緒に観測する。位置は学習時と同じく根リンク座標系。
         self._objects_def = objects or []
-        self.objects = self._setup_objects(self._objects_def, objects_dir)
         self.obj_states: dict[str, "EntityState"] = {}
-        if self.objects:
-            self.obj_states = dict(zip(self.objects, self.client.info([self._obj_entity(n) for n in self.objects])))
+        self.objects = self._setup_objects(self._objects_def, objects_dir)
 
     def _obj_entity(self, name: str) -> str:
         return f"{self.entity}__{name}"

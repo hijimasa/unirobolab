@@ -43,8 +43,17 @@ if ! pgrep -f 'default_server_endpoin[t]' >/dev/null; then
   STARTED_ENDPOINT=1; sleep 4
 fi
 timeout 30 ros2 run simulation_ros2_utils set_sim_state --ros-args -p set_state:=start >> "$LOG" 2>&1 || fail "the simulator did not answer set_simulation_state (is it running with ROS enabled?)"
-timeout 60 ros2 run simulation_ros2_utils spawn_entity --ros-args -r spawn_entity:=/spawn_entity \
-  -p urdf_path:="$URDF" -p robot_name:="$NS" -p x:=${SPAWN_X:-0.0} -p y:=${SPAWN_Y:-0.0} -p z:=0.0 -p R:=0.0 -p P:=0.0 -p Y:=${SPAWN_YAW:-0.0} >> "$LOG" 2>&1 || fail "spawn_entity failed (see $LOG)"
+if grep -q "joint_states_topic" "$URDF"; then
+  # the URDF names its topics: spawn as is
+  timeout 60 ros2 run simulation_ros2_utils spawn_entity --ros-args -r spawn_entity:=/spawn_entity \
+    -p urdf_path:="$URDF" -p robot_name:="$NS" -p x:=$(printf "%.4f" "${SPAWN_X:-0}") -p y:=$(printf "%.4f" "${SPAWN_Y:-0}") -p z:=0.0 -p R:=0.0 -p P:=0.0 -p Y:=$(printf "%.5f" "${SPAWN_YAW:-0}") >> "$LOG" 2>&1 || fail "spawn_entity failed (see $LOG)"
+else
+  # no topic names in the URDF: the simulator would publish /joint_states and listen on /joint_command (no namespace),
+  # but the contract expects /<ns>/...; spawn under the namespace so every interface gets the prefix
+  QZ=$(python3 -c "import math; print(math.sin(${SPAWN_YAW:-0}/2))"); QW=$(python3 -c "import math; print(math.cos(${SPAWN_YAW:-0}/2))")
+  timeout 60 ros2 service call /spawn_entity simulation_interfaces/srv/SpawnEntity "{name: '$NS', allow_renaming: false, entity_resource: {uri: '$URDF'}, entity_namespace: '$NS', initial_pose: {header: {frame_id: world}, pose: {position: {x: $(printf "%.4f" "${SPAWN_X:-0}"), y: $(printf "%.4f" "${SPAWN_Y:-0}"), z: 0.0}, orientation: {x: 0.0, y: 0.0, z: $QZ, w: $QW}}}}" > "$OUT/spawn.txt" 2>&1 || fail "spawn_entity service call failed (see $OUT/spawn.txt)"
+  cat "$OUT/spawn.txt" >> "$LOG"; grep -q "result=1" "$OUT/spawn.txt" || fail "spawn_entity refused: $(tr -d '\n' < "$OUT/spawn.txt" | cut -c1-200)"
+fi
 sleep 2
 timeout 10 ros2 topic echo "/$NS/joint_states" --once --field name >> "$LOG" 2>&1 || fail "no /$NS/joint_states from the simulator"
 

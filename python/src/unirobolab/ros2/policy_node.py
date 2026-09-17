@@ -48,6 +48,8 @@ from sensor_msgs.msg import Imu
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float64MultiArray, String
 
+RELATIVE_RESYNC = 0.3  # rad/m: relative targets re-sync to the measured position beyond this gap
+
 SUPPORTED_OBS = {"joint_position", "joint_velocity", "joint_effort", "command", "last_action",
                  "base_lin_vel", "base_ang_vel", "projected_gravity", "imu_orientation", "base_goal_xy",
                  "link_position", "link_goal", "object_position", "object_goal"}
@@ -209,6 +211,7 @@ class PolicyNode(Node):
         self.js_index: list[int] | None = None
         self.goal = np.zeros(self._goal_size(), dtype=np.float32)
         self.goal_received = False
+        self.needs_goal = any(spec["source"] in ("base_goal_xy", "link_goal", "object_goal") for spec, _, _ in self.observations)
         # base state from the pose topic: velocity by finite difference of consecutive poses
         self.base_pos = np.zeros(3); self.base_quat = np.array([0.0, 0.0, 0.0, 1.0])
         self.base_lin_vel = np.zeros(3); self.base_ang_vel = np.zeros(3)
@@ -535,6 +538,8 @@ class PolicyNode(Node):
             return
         if any(o not in self.obj_pos for o in self.object_names):
             return   # no object pose yet: do not command
+        if self.needs_goal and not self.goal_received:
+            return   # a spatial goal (base / link / object) of zeros is a real place: do not move until one arrives
         self.obs_ages.append(now - self.js_time)
         # watchdog + e-stop: suspend commanding, resume with a ramp-in
         age = now - self.js_time
@@ -582,8 +587,13 @@ class PolicyNode(Node):
                     if relative:
                         # increment on the previous target (measured position after start / safe stop)
                         prev = self.last_target.get(j)
+                        q_j = float(q_now[self.joints.index(j)]) if q_now is not None else None
                         if prev is None:
-                            prev = float(q_now[self.joints.index(j)]) if q_now is not None else 0.0
+                            prev = q_j if q_j is not None else 0.0
+                        elif q_j is not None and abs(prev - q_j) > RELATIVE_RESYNC:
+                            # the joint is far from the integrated target (moved by hand, reset, slipped):
+                            # restart from where it is instead of jumping back
+                            prev = q_j
                         v = prev + float(v)
                         if j in self.joint_limits:
                             v = min(max(v, self.joint_limits[j][0]), self.joint_limits[j][1])

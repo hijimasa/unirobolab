@@ -40,9 +40,9 @@ try:
 except ImportError:  # older interface package
     ApplyLinkWrench = None
 try:
-    from simulation_interfaces.srv import GetEntityState, SetEntityState, SpawnEntity
+    from simulation_interfaces.srv import GetEntityState, ResetSimulation, SetEntityState, SpawnEntity
 except ImportError:  # object tasks need the simulation_interfaces package
-    GetEntityState = SetEntityState = SpawnEntity = None
+    GetEntityState = ResetSimulation = SetEntityState = SpawnEntity = None
 
 
 @dataclass
@@ -71,6 +71,9 @@ class Scenario:
     # is published on the contract's object topic the way a camera/mocap bridge would on the real robot.
     objects: list[dict] = field(default_factory=list)
     object: str | None = None
+    # put every entity back to its spawn state (reset_simulation SCOPE_STATE) before each goal, so each attempt
+    # starts from the start pose the policy was trained from; default on for object tasks
+    reset_between_goals: bool | None = None
 
     @staticmethod
     def default(c: Contract, amplitude: float, hold_s: float, tolerance: float) -> "Scenario":
@@ -98,7 +101,8 @@ class Scenario:
                         max_obs_age_s=d.get("max_obs_age_s"),
                         disturbances=list(d.get("disturbances", [])),
                         entity=d.get("entity"), random_goals=rg, estop_test=d.get("estop_test"),
-                        objects=list(d.get("objects", [])), object=d.get("object"))
+                        objects=list(d.get("objects", [])), object=d.get("object"),
+                        reset_between_goals=d.get("reset_between_goals"))
 
     def tol(self, joint: str) -> float:
         return float(self.tolerance.get(joint, self.default_tolerance))
@@ -151,6 +155,7 @@ class Evaluator(Node):
             self.cli_get = self.create_client(GetEntityState, "/get_entity_state")
             self.cli_set = self.create_client(SetEntityState, "/set_entity_state")
             self.cli_spawn = self.create_client(SpawnEntity, "/spawn_entity")
+            self.cli_reset = self.create_client(ResetSimulation, "/reset_simulation")
             topics = (c.raw.get("ros") or {}).get("object_topics") or {}
             for o in self.object_names:
                 self.obj_pubs[o] = self.create_publisher(PoseStamped, topics.get(o, f"/{ros.namespace}/objects/{o}/pose"), 10)
@@ -222,6 +227,8 @@ class Evaluator(Node):
         return quat_to_rot(base[1]) @ np.asarray(p_root, float) + base[0]
 
     def _publish_object_poses(self, entity: str) -> None:
+        if not getattr(self, "objects_placed", False):
+            return
         for o in self.object_names:
             if entity != self.obj_entity(o) or self.obj_entity(o) not in self.world_pose:
                 continue
@@ -235,6 +242,15 @@ class Evaluator(Node):
             msg.pose.orientation.w = 1.0
             self.obj_pubs[o].publish(msg)
             self.rec.obj_rows.append((self.now(), o, float(p[0]), float(p[1]), float(p[2])))
+
+    def reset_state(self) -> bool:
+        """reset_simulation SCOPE_STATE: every entity back to its spawn pose and joint state (the simulation keeps running)."""
+        req = ResetSimulation.Request(); req.scope = ResetSimulation.Request.SCOPE_STATE
+        res = self._call(self.cli_reset, req)
+        ok = res is not None and res.result.result == res.result.RESULT_OK
+        if not ok:
+            print(f"reset_simulation(STATE) failed: {getattr(getattr(res, 'result', None), 'error_message', 'timeout')}", file=sys.stderr)
+        return ok
 
     def place_objects(self, sc: "Scenario") -> bool:
         """Put every object back at its start centre (root-link frame -> world) with zero velocity."""
@@ -254,6 +270,7 @@ class Evaluator(Node):
             if res is None or res.result.result != res.result.RESULT_OK:
                 print(f"set_entity_state({req.entity}) failed: {getattr(getattr(res, 'result', None), 'error_message', 'timeout')}", file=sys.stderr)
                 return False
+        self.objects_placed = True
         return True
 
     def apply_wrench(self, entity: str, d: dict) -> None:
@@ -513,7 +530,15 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
         if not rec.status:
             print(f"no status from policy node within {launch_timeout_s}s", file=sys.stderr)
         if node.object_task:
+            # spawn the objects and put them at their start before the policy sees anything: the node acts as soon as
+            # an object pose arrives, and a pose from the parking spot would send the arm off into a state the policy
+            # never trained from
             node.setup_objects(sc, out_dir)
+            t_pose = time.monotonic()
+            while node.c.ros.namespace not in node.world_pose and time.monotonic() - t_pose < 10.0:
+                rclpy.spin_once(node, timeout_sec=0.05)
+            if not node.place_objects(sc):
+                print("could not place the objects at their start (no robot pose from get_entity_state?)", file=sys.stderr)
         _spin_for(node, sc.warmup_s)
         origin = node.latest_xy() if node.base_task else None
         if node.base_task and origin is None:
@@ -521,8 +546,18 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
         for g in sc.goals:
             if node.base_task and origin is not None:
                 g = [float(origin[0] + g[0]), float(origin[1] + g[1])]  # scenario goals are offsets
-            if node.object_task and not node.place_objects(sc):
-                print("could not place the objects at their start (no robot pose from get_entity_state?)", file=sys.stderr)
+            if node.object_task:
+                reset = sc.reset_between_goals if sc.reset_between_goals is not None else True
+                if reset and phases:   # the first goal already starts from the spawn state
+                    # hold the node with the e-stop while the simulator is reset: otherwise it re-sends its last
+                    # target from a stale observation and the joints snap back before it notices the reset
+                    node.pub_estop.publish(Bool(data=True)); _spin_for(node, 0.3)
+                    node.reset_state(); _spin_for(node, 0.5)
+                if not node.place_objects(sc):
+                    print("could not place the objects at their start (no robot pose from get_entity_state?)", file=sys.stderr)
+                _spin_for(node, 0.3)
+                if reset and phases:
+                    node.pub_estop.publish(Bool(data=False)); _spin_for(node, float((c.safety or {}).get("ramp_in_s", 1.0)) + 0.3)
             t_start = node.now()
             # re-publish the goal a few times: a late subscriber must not miss it
             for _ in range(3):
@@ -580,6 +615,17 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
     with open(os.path.join(out_dir, "status.jsonl"), "w", encoding="utf-8") as f:
         for s in rec.status:
             f.write(json.dumps(s) + "\n")
+    # the node's observation / action vectors (debug topics), for comparing with the training / live runner
+    for fname, rows in (("observations.csv", rec.observations), ("actions.csv", rec.actions)):
+        with open(os.path.join(out_dir, fname), "w", newline="") as f:
+            w = csv.writer(f)
+            for t, v in rows:
+                w.writerow([f"{t:.4f}"] + [f"{x:.5f}" for x in v])
+    if rec.obj_rows:
+        with open(os.path.join(out_dir, "objects.csv"), "w", newline="") as f:
+            w = csv.writer(f); w.writerow(["t", "object", "x", "y", "z"])
+            for row in rec.obj_rows:
+                w.writerow([f"{row[0]:.4f}", row[1]] + [f"{x:.4f}" for x in row[2:]])
 
     print()
     print(f"sim2sim {c.name}: {'PASS' if report['pass'] else 'FAIL'}")
