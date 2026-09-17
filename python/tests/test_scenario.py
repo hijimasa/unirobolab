@@ -19,3 +19,10 @@ def test_base_scenario_points_on_ring():
     sc = default_scenario(c, {"goal": [{"type": "base_in_region", "tolerance": 0.2, "region": {"r_min": 1.0, "r_max": 3.0}}], "episode": {"time_s": 10.0}})
     assert len(sc["goals"]) == 3 and abs((sc["goals"][0][0] ** 2 + sc["goals"][0][1] ** 2) ** 0.5 - 2.0) < 1e-3
     assert abs(sc["default_tolerance"] - 0.3) < 1e-9 and sc["hold_s"] == 12.0
+
+
+def test_link_scenario_points_inside_region():
+    c = {"control": {"policy_rate_hz": 25}, "observations": [{"source": "link_goal"}], "robot": {"joints": ["a"]}}
+    sc = default_scenario(c, {"goal": [{"type": "link_near", "tolerance": 0.03, "region": {"shape": "box", "center": [0.045, -0.03, 0.146], "size": [0.01, 0.04, 0.04]}}], "episode": {"time_s": 3.0}})
+    assert len(sc["goals"]) == 3 and sc["goals"][0] == [0.045, -0.03, 0.146] and abs(sc["goals"][1][2] - 0.156) < 1e-6
+    assert abs(sc["default_tolerance"] - 0.045) < 1e-9 and sc["hold_s"] == 4.0

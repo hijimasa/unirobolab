@@ -152,7 +152,7 @@ def explain(report: dict, lang: str = "ja") -> dict:
         for ph in phases:
             ph_ok = True
             for j, res in ph.get("joints", {}).items():
-                is_base = is_base or j == "base"
+                is_base = is_base or j in ("base", "link")   # 距離 [m] で判定する条件
                 if "mean_abs_err" not in res:
                     no_samples = True
                     ph_ok = False

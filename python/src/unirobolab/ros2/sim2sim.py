@@ -259,7 +259,7 @@ def evaluate(c: Contract, sc: Scenario, rec: Recorder, phases: list[tuple[float,
             track.append(row)
         checks["tracking"] = {"pass": all_ok and bool(phases), "phases": track}
         phases = []  # skip the joint loop below
-    for (t_start, t_end, goal) in phases:
+    for (t_start, t_end, goal) in ([] if c.obs_terms_by_source("link_goal") else phases):
         win = _joint_positions(rec, act_joints, t_end - sc.settle_window_s, t_end)
         row = {"goal": goal, "t_end": round(t_end, 2), "joints": {}}
         for i, j in enumerate(act_joints):
@@ -274,7 +274,32 @@ def evaluate(c: Contract, sc: Scenario, rec: Recorder, phases: list[tuple[float,
             row["joints"][j] = {"pass": ok, "mean_abs_err": round(err, 4), "tol": sc.tol(j),
                                 "q_mean": round(float(q.mean()), 4), "n": int(q.size)}
         track.append(row)
-    if not base_task:
+    link_terms = c.obs_terms_by_source("link_goal")
+    if link_terms and not base_task:
+        # 手先: 目標は根リンク座標系の点。joint_states から順運動学で手先位置を求めて距離で判定
+        from unirobolab.fk import fk_point
+        spec = link_terms[0].spec
+        track = []
+        all_ok = True
+        for (t_start, t_end, goal) in phases:
+            pts = []
+            for t, names, pos, _ in rec.js_rows:
+                if t_end - sc.settle_window_s <= t <= t_end:
+                    pts.append(fk_point(spec["chain"], {n: float(v) for n, v in zip(names, pos)}, spec.get("point")))
+            row = {"goal": goal, "t_end": round(t_end, 2), "joints": {}}
+            if not pts:
+                row["joints"]["link"] = {"pass": False, "detail": "no joint_states in settle window"}
+                all_ok = False
+            else:
+                arr = np.asarray(pts)
+                d = float(np.mean(np.linalg.norm(arr - np.asarray(goal[:3], float), axis=1)))
+                ok = d <= sc.default_tolerance
+                all_ok &= ok
+                row["joints"]["link"] = {"pass": ok, "mean_abs_err": round(d, 4), "tol": sc.default_tolerance,
+                                         "q_mean": [round(float(v), 3) for v in arr.mean(axis=0)], "n": int(len(pts))}
+            track.append(row)
+        checks["tracking"] = {"pass": all_ok and bool(phases), "phases": track}
+    elif not base_task:
         checks["tracking"] = {"pass": all_ok and bool(phases), "phases": track}
 
     # finite

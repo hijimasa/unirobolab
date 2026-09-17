@@ -46,7 +46,8 @@ from sensor_msgs.msg import JointState
 from std_msgs.msg import Bool, Float64MultiArray, String
 
 SUPPORTED_OBS = {"joint_position", "joint_velocity", "joint_effort", "command", "last_action",
-                 "base_lin_vel", "base_ang_vel", "projected_gravity", "imu_orientation", "base_goal_xy"}
+                 "base_lin_vel", "base_ang_vel", "projected_gravity", "imu_orientation", "base_goal_xy",
+                 "link_position", "link_goal"}
 
 
 def quat_to_rot(q) -> np.ndarray:
@@ -272,7 +273,7 @@ class PolicyNode(Node):
         if s in ("command", "custom"):
             return int(spec["size"])
         return {"base_lin_vel": 3, "base_ang_vel": 3, "projected_gravity": 3,
-                "imu_orientation": 4, "base_goal_xy": 2}.get(s, 0)
+                "imu_orientation": 4, "base_goal_xy": 2, "link_position": 3, "link_goal": 3}.get(s, 0)
 
     def _action_size(self, spec: dict) -> int:
         t = spec["target"]
