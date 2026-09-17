@@ -73,6 +73,12 @@ def _topics(raw: dict[str, Any]) -> dict[str, str]:
         t["imu"] = f"{pre}/imu"
     if any(s in ("base_lin_vel", "base_ang_vel", "base_goal_xy") for s in src) and "odom" not in t:
         t["odom"] = f"{pre}/odom"
+    objs = sorted({term.get("object") for term in _terms(raw, "observations") if term.get("source") in ("object_position", "object_goal") and term.get("object")})
+    obj_topics = ros.get("object_topics") or {}
+    for o in objs:
+        t[f"object:{o}"] = obj_topics.get(o, f"{pre}/objects/{o}/pose")
+    if objs and "goal" not in t:
+        t["goal"] = ros.get("goal_topic") or f"{pre}/policy/command"
     act = _terms(raw, "actions")
     if any(a.get("target") == "base_twist" for a in act) and "cmd_vel" not in t:
         t["cmd_vel"] = f"{pre}/cmd_vel"
@@ -111,6 +117,8 @@ def deploy_guide(raw: dict[str, Any], package: str | None = None, lang: str = "j
                                ("cmd_vel", "速度指令 (出力)", "geometry_msgs/Twist を受ける台車ドライバ")):
             if k in t:
                 L.append(f"| {label} | `{t[k]}` | {what} |")
+        for k in sorted(k for k in t if k.startswith("object:")):
+            L.append(f"| 物体 `{k[7:]}` の位置 | `{t[k]}` | geometry_msgs/PoseStamped をロボットの根リンク座標系で出す (カメラ・モーションキャプチャ等) |")
         L += ["", "## 2. 動かす前に確かめること", ""]
         L.append(f"- 非常停止: `{t['estop']}` に true を流して指令が止まることを、ロボットを浮かせた状態で確かめる。"
                  " 物理的な非常停止スイッチも別に用意する (このトピックはソフトウェアの停止でしかない)。")
@@ -153,6 +161,8 @@ def deploy_guide(raw: dict[str, Any], package: str | None = None, lang: str = "j
                                ("imu", "IMU", "sensor_msgs/Imu"), ("cmd_vel", "velocity command (output)", "a base driver taking geometry_msgs/Twist")):
             if k in t:
                 L.append(f"| {label} | `{t[k]}` | {what} |")
+        for k in sorted(k for k in t if k.startswith("object:")):
+            L.append(f"| object `{k[7:]}` pose | `{t[k]}` | geometry_msgs/PoseStamped in the robot's root-link frame (camera, mocap, ...) |")
         L += ["", "## 2. Check before moving", "",
               f"- E-stop: publish true on `{t['estop']}` with the robot lifted and confirm commands stop. Keep a physical e-stop too.",]
         if safety.get("joint_limits"):
@@ -187,7 +197,7 @@ def deploy_summary(raw: dict[str, Any], package: str | None = None, lang: str = 
     safety = raw.get("safety", {})
     L = []
     L.append(("接続: " if ja else "connect: ") + f"joint_states {t['joint_states']}  |  " + ("指令 " if ja else "command ") + t["command"])
-    extra = [f"{k} {t[k]}" for k in ("goal", "odom", "imu", "cmd_vel") if k in t]
+    extra = [f"{k} {t[k]}" for k in ("goal", "odom", "imu", "cmd_vel") if k in t] + [f"{k} {t[k]}" for k in sorted(t) if k.startswith("object:")]
     if extra:
         L.append("        " + "  |  ".join(extra))
     L.append(("非常停止: " if ja else "e-stop: ") + t["estop"] + (" (true で停止、浮かせて先に試す)" if ja else " (true stops; test with the robot lifted)"))

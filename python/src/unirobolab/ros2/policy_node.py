@@ -22,6 +22,9 @@ Safety (contract "safety"): stale observations or e-stop suspend commanding (sto
 resuming ramps in from the measured state over ramp_in_s; position targets are rate-limited
 by max_joint_speed and clamped to joint_limits; velocity/effort/base speeds are clamped.
   sub  ground_truth_topic         geometry_msgs/PoseStamped    (base_* observations; velocity by finite difference)
+  sub  ros.object_topics[<obj>]   geometry_msgs/PoseStamped    (object_position / object_goal: the object's pose
+                                  expressed in the robot's root-link frame, e.g. from a camera or a mocap bridge;
+                                  default /<ns>/objects/<obj>/pose)
   pub  command_topic              sensor_msgs/JointState       (command_mode=joint_state_topic)
        /<ns>/<controller>/commands std_msgs/Float64MultiArray  (command_mode=ros2_control_commands)
   pub  <goal_topic dir>/status    std_msgs/String (JSON, 1 Hz)
@@ -47,7 +50,7 @@ from std_msgs.msg import Bool, Float64MultiArray, String
 
 SUPPORTED_OBS = {"joint_position", "joint_velocity", "joint_effort", "command", "last_action",
                  "base_lin_vel", "base_ang_vel", "projected_gravity", "imu_orientation", "base_goal_xy",
-                 "link_position", "link_goal"}
+                 "link_position", "link_goal", "object_position", "object_goal"}
 
 
 def quat_to_rot(q) -> np.ndarray:
@@ -214,6 +217,13 @@ class PolicyNode(Node):
         # velocities already in the body frame when they come from IMU/odometry
         self.body_lin_vel: np.ndarray | None = None
         self.body_ang_vel: np.ndarray | None = None
+        # objects (object_position / object_goal): latest pose per object, root-link frame
+        self.object_names = sorted({spec["object"] for spec, _, _ in self.observations
+                                    if spec["source"] in ("object_position", "object_goal")})
+        object_topics = ros.get("object_topics") or {}
+        self.object_topics = {o: object_topics.get(o, f"{prefix}/objects/{o}/pose") for o in self.object_names}
+        self.obj_pos: dict[str, np.ndarray] = {}
+        self.obj_wall_time: dict[str, float] = {}
         self.last_action = np.zeros(self.action_dim, dtype=np.float32)
         self.frames: collections.deque = collections.deque(maxlen=self.history)
         self.steps = 0
@@ -238,6 +248,8 @@ class PolicyNode(Node):
                 self.create_subscription(Odometry, self.odom_topic, self._on_odom, qos)
             if not (self.imu_topic and self.odom_topic):
                 self.create_subscription(PoseStamped, self.ground_truth_topic, self._on_pose, qos)
+        for o, topic in self.object_topics.items():
+            self.create_subscription(PoseStamped, topic, lambda msg, o=o: self._on_object(o, msg), qos)
         if self.twist_action is not None:
             self.pub_twist = self.create_publisher(Twist, self.cmd_vel_topic, qos)
         self.create_subscription(Bool, self.estop_topic, self._on_estop, qos)
@@ -273,7 +285,8 @@ class PolicyNode(Node):
         if s in ("command", "custom"):
             return int(spec["size"])
         return {"base_lin_vel": 3, "base_ang_vel": 3, "projected_gravity": 3,
-                "imu_orientation": 4, "base_goal_xy": 2, "link_position": 3, "link_goal": 3}.get(s, 0)
+                "imu_orientation": 4, "base_goal_xy": 2, "link_position": 3, "link_goal": 3,
+                "object_position": 3, "object_goal": 3}.get(s, 0)
 
     def _action_size(self, spec: dict) -> int:
         t = spec["target"]
@@ -327,6 +340,8 @@ class PolicyNode(Node):
         self.safe_stopped = False
         self.safe_stop_reason = ""
         self.ramp_start = time.monotonic()  # ramp in again from the measured state
+        if any(spec.get("relative") for spec, _, _ in self.actions):
+            self.last_target = {}  # relative targets restart from the measured position
 
     def _apply_safety(self, targets: dict[str, float], mode: str, now: float) -> dict[str, float]:
         """Clamp targets to the contract's safety limits and blend during ramp-in."""
@@ -373,6 +388,9 @@ class PolicyNode(Node):
         for spec, n, _ in self.observations:
             if spec["source"] == "link_goal":
                 return 3  # goal point in the root-link frame on the goal topic
+        for spec, n, _ in self.observations:
+            if spec["source"] == "object_goal":
+                return 3  # goal position of the object in the root-link frame on the goal topic
         return 0
 
     def _fail(self, msg: str) -> None:
@@ -408,6 +426,11 @@ class PolicyNode(Node):
         self.base_pos, self.base_quat, self.base_time = pos, quat, t
         self.base_wall_time = time.monotonic()
         self.base_received = True
+
+    def _on_object(self, name: str, msg: PoseStamped) -> None:
+        p = msg.pose.position
+        self.obj_pos[name] = np.array([p.x, p.y, p.z], dtype=np.float32)
+        self.obj_wall_time[name] = time.monotonic()
 
     def _on_imu(self, msg: Imu) -> None:
         o = msg.orientation
@@ -487,6 +510,9 @@ class PolicyNode(Node):
                 qmap = {name: float(pos) for name, pos in zip(self.js.name, self.js.position)} if self.js is not None else {}
                 p = fk_point(spec["chain"], qmap, spec.get("point"))
                 v = p if s == "link_position" else self.goal[:3] - p
+            elif s in ("object_position", "object_goal"):
+                p = self.obj_pos.get(spec["object"], np.zeros(3, dtype=np.float32))
+                v = p if s == "object_position" else self.goal[:3] - p
             else:
                 v = np.zeros(n, dtype=np.float32)
             if v is None:
@@ -507,11 +533,15 @@ class PolicyNode(Node):
             return
         if self.needs_base and not self.base_received:
             return
+        if any(o not in self.obj_pos for o in self.object_names):
+            return   # no object pose yet: do not command
         self.obs_ages.append(now - self.js_time)
         # watchdog + e-stop: suspend commanding, resume with a ramp-in
         age = now - self.js_time
         if self.needs_base and self.base_wall_time > 0:
             age = max(age, now - self.base_wall_time)
+        for o in self.object_names:
+            age = max(age, now - self.obj_wall_time[o])
         if age > self.max_obs_age or self.estop:
             reason = "e-stop" if self.estop else "stale_observations"
             if not self.safe_stopped:
@@ -546,7 +576,17 @@ class PolicyNode(Node):
             raw[off:off + n] = clipped  # last_action sees the clipped raw output
             if spec["target"] == "joints":
                 mode = spec["mode"]
+                relative = bool(spec.get("relative")) and mode == "position"
+                q_now = self._joint_array("position") if relative else None
                 for j, v in zip(spec.get("joints") or self.joints, a):
+                    if relative:
+                        # increment on the previous target (measured position after start / safe stop)
+                        prev = self.last_target.get(j)
+                        if prev is None:
+                            prev = float(q_now[self.joints.index(j)]) if q_now is not None else 0.0
+                        v = prev + float(v)
+                        if j in self.joint_limits:
+                            v = min(max(v, self.joint_limits[j][0]), self.joint_limits[j][1])
                     targets_by_joint[j] = float(v)
             elif spec["target"] == "base_twist":
                 if self.ramp_start is None:
@@ -601,6 +641,7 @@ class PolicyNode(Node):
             "joints_ok": self.js_index is not None,
             "goal_received": self.goal_received,
             "base_received": self.base_received if self.needs_base else None,
+            "objects_received": {o: o in self.obj_pos for o in self.object_names} if self.object_names else None,
             # joint_states age as seen by the policy loop, over the last status window
             "obs_age_max_s": round(max(self.obs_ages), 4) if self.obs_ages else None,
             "obs_age_mean_s": round(float(np.mean(self.obs_ages)), 4) if self.obs_ages else None,

@@ -15,6 +15,22 @@ def default_scenario(contract: dict[str, Any], spec: dict[str, Any] | None = Non
     obs_src = [t.get("source") for t in (contract.get("observations") or [])]
     base = "base_goal_xy" in obs_src
     time_s = float(ep.get("time_s", 10.0 if base else 2.0) or (10.0 if base else 2.0))
+    if goal.get("type") == "object_in_region" or any(t == "object_goal" for t in obs_src):
+        # 物体を領域へ: 目標は物体の到達位置 (根リンク座標系)。物体は各目標の前に開始条件の中心へ置き直す。
+        region = goal.get("region") or {}
+        c0 = np.asarray(region.get("center", [0.5, 0.0, 0.0]), float)
+        half = 0.5 * np.asarray(region.get("size", [0.2, 0.2, 0.0]), float) if region.get("shape", "box") == "box" \
+            else np.array([float(region.get("radius", 0.1))] * 2 + [0.0])
+        goals = [[round(float(v), 4) for v in c0 + f * half] for f in (np.array([0, 0, 0]), np.array([0.5, 0.5, 0]), np.array([-0.5, -0.5, 0]))]
+        tol = round(float(goal.get("tolerance", 0.05)) * 1.5, 4)
+        hold = max(4.0, time_s + 2.0)
+        objects = spec.get("objects") or []
+        obj = goal.get("object") or next((t.get("object") for t in (contract.get("observations") or []) if t.get("source") == "object_goal"), None)
+        note = f"auto: 3 goal points inside the task's region for object '{obj}' (root-link frame), tolerance {tol:g} m = 1.5 x the training tolerance"
+        return {"_note": note, "goals": goals, "hold_s": hold, "settle_window_s": 1.0, "warmup_s": 3.0,
+                "default_tolerance": tol, "rate_tolerance": 0.15, "max_obs_age_s": round(3.0 / rate, 3),
+                "objects": objects, "object": obj,
+                "estop_test": {"at_s": 1.0, "release_at_s": 3.0, "hold_s": 6.0}}
     if goal.get("type") == "link_near" or any(t == "link_goal" for t in obs_src):
         region = goal.get("region") or {}
         c0 = np.asarray(region.get("center", [0.3, 0.0, 0.3]), float)

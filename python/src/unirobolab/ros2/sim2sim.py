@@ -39,6 +39,10 @@ try:
     from simulation_extra_interfaces.srv import ApplyLinkWrench
 except ImportError:  # older interface package
     ApplyLinkWrench = None
+try:
+    from simulation_interfaces.srv import GetEntityState, SetEntityState, SpawnEntity
+except ImportError:  # object tasks need the simulation_interfaces package
+    GetEntityState = SetEntityState = SpawnEntity = None
 
 
 @dataclass
@@ -62,6 +66,11 @@ class Scenario:
     # `hold_s`, release it at `release_at_s`; pass = the node reports stopped, publishes no actions
     # while stopped, and resumes afterwards. {"at_s": 1.0, "release_at_s": 3.0, "hold_s": 6.0}
     estop_test: dict | None = None
+    # object tasks: the objects (task.json objects[]: name, shape, size, mass, start) are spawned as
+    # <ns>__<name>, put back at their start centre before every goal, and their pose (root-link frame)
+    # is published on the contract's object topic the way a camera/mocap bridge would on the real robot.
+    objects: list[dict] = field(default_factory=list)
+    object: str | None = None
 
     @staticmethod
     def default(c: Contract, amplitude: float, hold_s: float, tolerance: float) -> "Scenario":
@@ -88,7 +97,8 @@ class Scenario:
                         warmup_s=float(d.get("warmup_s", 3.0)),
                         max_obs_age_s=d.get("max_obs_age_s"),
                         disturbances=list(d.get("disturbances", [])),
-                        entity=d.get("entity"), random_goals=rg, estop_test=d.get("estop_test"))
+                        entity=d.get("entity"), random_goals=rg, estop_test=d.get("estop_test"),
+                        objects=list(d.get("objects", [])), object=d.get("object"))
 
     def tol(self, joint: str) -> float:
         return float(self.tolerance.get(joint, self.default_tolerance))
@@ -102,6 +112,7 @@ class Recorder:
     observations: list[tuple] = field(default_factory=list)
     js_names: list[str] | None = None
     poses: list[tuple] = field(default_factory=list)          # (t, x, y, z)
+    obj_rows: list[tuple] = field(default_factory=list)       # (t, object, x, y, z) root-link frame
 
 
 class Evaluator(Node):
@@ -126,6 +137,124 @@ class Evaluator(Node):
         if ApplyLinkWrench is not None:
             self.cli_wrench = self.create_client(ApplyLinkWrench, "/apply_link_wrench")
         self.wrench_log: list[dict] = []
+        # objects: polled through get_entity_state (round robin with the robot's base) and re-published
+        self.object_names = sorted({t.spec["object"] for t in c.observations if t.source in ("object_position", "object_goal")})
+        self.object_task = bool(self.object_names)
+        self.world_pose: dict[str, tuple[np.ndarray, np.ndarray]] = {}   # entity -> (pos, quat) ROS world
+        self.obj_pubs = {}
+        self._poll_future = None
+        self._poll_entity = None
+        self._poll_i = 0
+        if self.object_task:
+            if GetEntityState is None:
+                raise RuntimeError("object tasks need the simulation_interfaces package (get/set_entity_state)")
+            self.cli_get = self.create_client(GetEntityState, "/get_entity_state")
+            self.cli_set = self.create_client(SetEntityState, "/set_entity_state")
+            self.cli_spawn = self.create_client(SpawnEntity, "/spawn_entity")
+            topics = (c.raw.get("ros") or {}).get("object_topics") or {}
+            for o in self.object_names:
+                self.obj_pubs[o] = self.create_publisher(PoseStamped, topics.get(o, f"/{ros.namespace}/objects/{o}/pose"), 10)
+            self.create_timer(0.01, self._poll_objects)
+
+    def obj_entity(self, name: str) -> str:
+        return f"{self.c.ros.namespace}__{name}"
+
+    def _call(self, client, req, timeout_s: float = 5.0):
+        if not client.wait_for_service(timeout_sec=timeout_s):
+            return None
+        fut = client.call_async(req)
+        end = time.monotonic() + timeout_s
+        while rclpy.ok() and not fut.done() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.02)
+        return fut.result() if fut.done() else None
+
+    def setup_objects(self, sc: "Scenario", out_dir: str) -> None:
+        """Write the object URDFs and spawn the ones that do not exist yet (the path must be visible to the simulator)."""
+        from unirobolab.objects import write_object_urdfs
+        defs = {o["name"]: o for o in sc.objects}
+        missing = [o for o in self.object_names if o not in defs]
+        if missing:
+            raise RuntimeError(f"scenario has no definition for objects {missing} (scenario-default --task task.json adds them)")
+        paths = write_object_urdfs([defs[o] for o in self.object_names], os.path.join(out_dir, "objects"))
+        for i, o in enumerate(self.object_names):
+            req = SpawnEntity.Request()
+            req.name = self.obj_entity(o)
+            req.allow_renaming = False
+            req.entity_resource.uri = os.path.abspath(paths[o])
+            req.initial_pose.header.frame_id = "world"
+            req.initial_pose.pose.position.x = 10.0 + i; req.initial_pose.pose.position.y = 10.0
+            req.initial_pose.pose.orientation.w = 1.0
+            res = self._call(self.cli_spawn, req, 30.0)
+            if res is None:
+                raise RuntimeError("spawn_entity did not answer (is the simulator running with ROS enabled?)")
+            if res.result.result != res.result.RESULT_OK and "already taken" not in (res.result.error_message or ""):
+                raise RuntimeError(f"spawn_entity({req.name}) failed: {res.result.error_message}")
+
+    def _poll_objects(self) -> None:
+        if self._poll_future is not None:
+            if not self._poll_future.done():
+                return
+            res = self._poll_future.result()
+            self._poll_future = None
+            if res is not None and res.result.result == res.result.RESULT_OK:
+                p = res.state.pose.position; o = res.state.pose.orientation
+                self.world_pose[self._poll_entity] = (np.array([p.x, p.y, p.z]), np.array([o.x, o.y, o.z, o.w]))
+                self._publish_object_poses(self._poll_entity)
+        ents = [self.c.ros.namespace] + [self.obj_entity(o) for o in self.object_names]
+        self._poll_entity = ents[self._poll_i % len(ents)]
+        self._poll_i += 1
+        req = GetEntityState.Request(); req.entity = self._poll_entity
+        if self.cli_get.service_is_ready():
+            self._poll_future = self.cli_get.call_async(req)
+
+    def root_from_world(self, p_world: np.ndarray) -> np.ndarray | None:
+        from unirobolab.geometry import quat_to_rot
+        base = self.world_pose.get(self.c.ros.namespace)
+        if base is None:
+            return None
+        return quat_to_rot(base[1]).T @ (np.asarray(p_world, float) - base[0])
+
+    def world_from_root(self, p_root: np.ndarray) -> np.ndarray | None:
+        from unirobolab.geometry import quat_to_rot
+        base = self.world_pose.get(self.c.ros.namespace)
+        if base is None:
+            return None
+        return quat_to_rot(base[1]) @ np.asarray(p_root, float) + base[0]
+
+    def _publish_object_poses(self, entity: str) -> None:
+        for o in self.object_names:
+            if entity != self.obj_entity(o) or self.obj_entity(o) not in self.world_pose:
+                continue
+            p = self.root_from_world(self.world_pose[self.obj_entity(o)][0])
+            if p is None:
+                continue
+            msg = PoseStamped()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.header.frame_id = "root_link"
+            msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = float(p[0]), float(p[1]), float(p[2])
+            msg.pose.orientation.w = 1.0
+            self.obj_pubs[o].publish(msg)
+            self.rec.obj_rows.append((self.now(), o, float(p[0]), float(p[1]), float(p[2])))
+
+    def place_objects(self, sc: "Scenario") -> bool:
+        """Put every object back at its start centre (root-link frame -> world) with zero velocity."""
+        defs = {o["name"]: o for o in sc.objects}
+        for o in self.object_names:
+            c0 = np.asarray(defs[o].get("start", {}).get("center", [0.3, 0.0, 0.0]), float)
+            p = self.world_from_root(c0)
+            if p is None:
+                return False
+            req = SetEntityState.Request()
+            req.entity = self.obj_entity(o)
+            req.state.header.frame_id = "world"
+            req.state.pose.position.x, req.state.pose.position.y, req.state.pose.position.z = float(p[0]), float(p[1]), float(p[2])
+            req.state.pose.orientation.w = 1.0
+            req.set_pose = True; req.set_twist = True; req.set_acceleration = False
+            res = self._call(self.cli_set, req)
+            if res is None or res.result.result != res.result.RESULT_OK:
+                print(f"set_entity_state({req.entity}) failed: {getattr(getattr(res, 'result', None), 'error_message', 'timeout')}", file=sys.stderr)
+                return False
+        return True
 
     def apply_wrench(self, entity: str, d: dict) -> None:
         if self.cli_wrench is None or not self.cli_wrench.wait_for_service(timeout_sec=2.0):
@@ -259,7 +388,7 @@ def evaluate(c: Contract, sc: Scenario, rec: Recorder, phases: list[tuple[float,
             track.append(row)
         checks["tracking"] = {"pass": all_ok and bool(phases), "phases": track}
         phases = []  # skip the joint loop below
-    for (t_start, t_end, goal) in ([] if c.obs_terms_by_source("link_goal") else phases):
+    for (t_start, t_end, goal) in ([] if c.obs_terms_by_source("link_goal") or c.obs_terms_by_source("object_goal") else phases):
         win = _joint_positions(rec, act_joints, t_end - sc.settle_window_s, t_end)
         row = {"goal": goal, "t_end": round(t_end, 2), "joints": {}}
         for i, j in enumerate(act_joints):
@@ -274,8 +403,28 @@ def evaluate(c: Contract, sc: Scenario, rec: Recorder, phases: list[tuple[float,
             row["joints"][j] = {"pass": ok, "mean_abs_err": round(err, 4), "tol": sc.tol(j),
                                 "q_mean": round(float(q.mean()), 4), "n": int(q.size)}
         track.append(row)
+    obj_terms = c.obs_terms_by_source("object_goal")
+    if obj_terms and not base_task:
+        # 物体: 目標は物体の到達位置 (根リンク座標系)。整定窓での物体位置と目標の平面距離で判定
+        obj = obj_terms[0].spec["object"]
+        track = []
+        all_ok = True
+        for (t_start, t_end, goal) in phases:
+            pts = np.array([[x, y] for (t, o, x, y, z) in rec.obj_rows if o == obj and t_end - sc.settle_window_s <= t <= t_end])
+            row = {"goal": goal, "t_end": round(t_end, 2), "joints": {}}
+            if pts.size == 0:
+                row["joints"][f"object:{obj}"] = {"pass": False, "detail": "no object pose in settle window"}
+                all_ok = False
+            else:
+                d = float(np.mean(np.linalg.norm(pts - np.asarray(goal[:2], float), axis=1)))
+                ok = d <= sc.default_tolerance
+                all_ok &= ok
+                row["joints"][f"object:{obj}"] = {"pass": ok, "mean_abs_err": round(d, 4), "tol": sc.default_tolerance,
+                                                  "q_mean": [round(float(v), 3) for v in pts.mean(axis=0)], "n": int(len(pts))}
+            track.append(row)
+        checks["tracking"] = {"pass": all_ok and bool(phases), "phases": track}
     link_terms = c.obs_terms_by_source("link_goal")
-    if link_terms and not base_task:
+    if link_terms and not base_task and not obj_terms:
         # 手先: 目標は根リンク座標系の点。joint_states から順運動学で手先位置を求めて距離で判定
         from unirobolab.fk import fk_point
         spec = link_terms[0].spec
@@ -299,7 +448,7 @@ def evaluate(c: Contract, sc: Scenario, rec: Recorder, phases: list[tuple[float,
                                          "q_mean": [round(float(v), 3) for v in arr.mean(axis=0)], "n": int(len(pts))}
             track.append(row)
         checks["tracking"] = {"pass": all_ok and bool(phases), "phases": track}
-    elif not base_task:
+    elif not base_task and not obj_terms:
         checks["tracking"] = {"pass": all_ok and bool(phases), "phases": track}
 
     # finite
@@ -363,6 +512,8 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
             rclpy.spin_once(node, timeout_sec=0.1)
         if not rec.status:
             print(f"no status from policy node within {launch_timeout_s}s", file=sys.stderr)
+        if node.object_task:
+            node.setup_objects(sc, out_dir)
         _spin_for(node, sc.warmup_s)
         origin = node.latest_xy() if node.base_task else None
         if node.base_task and origin is None:
@@ -370,6 +521,8 @@ def run(c: Contract, sc: Scenario, pkg: str | None, ns: str | None, out_dir: str
         for g in sc.goals:
             if node.base_task and origin is not None:
                 g = [float(origin[0] + g[0]), float(origin[1] + g[1])]  # scenario goals are offsets
+            if node.object_task and not node.place_objects(sc):
+                print("could not place the objects at their start (no robot pose from get_entity_state?)", file=sys.stderr)
             t_start = node.now()
             # re-publish the goal a few times: a late subscriber must not miss it
             for _ in range(3):
