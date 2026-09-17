@@ -125,9 +125,15 @@ class DirectVecEnv(VecEnv):
             paths = write_object_urdfs(self.objects, os.path.join(os.path.dirname(os.path.abspath(spawn_urdf)), "objects"))
             for i, e in enumerate(entities):
                 for o in self.objects:
-                    got = self.client.spawn(f"{e}__{o['name']}", paths[o["name"]], 10.0 + i, 10.0, 0.0, 0.0)   # 置き場所は最初のリセットで決める
-                    if got != f"{e}__{o['name']}":
-                        raise RuntimeError(f"object entity name clash: wanted {e}__{o['name']}, got {got}")
+                    ent = f"{e}__{o['name']}"
+                    try:
+                        self.client.info([ent])   # 既にある (前回の学習の残り) ならそのまま使う
+                        continue
+                    except LearningServerError:
+                        pass
+                    got = self.client.spawn(ent, paths[o["name"]], 10.0 + i, 10.0, 0.0, 0.0)   # 置き場所は最初のリセットで決める
+                    if got != ent:
+                        raise RuntimeError(f"object entity name clash: wanted {ent}, got {got}")
         self.last_action = np.zeros((n, c.action_dim), np.float32)
         # relative position actions: the integrated target per env (reset to the measured q at episode start)
         self.relative = self.twist_term is None and bool(self.act_term.spec.get("relative")) and self.act_term.spec.get("mode", "position") == "position"
