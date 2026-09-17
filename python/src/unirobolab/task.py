@@ -108,14 +108,18 @@ class Condition:
             reg = cfg.get("region", {})
             self.radius = (float(reg.get("r_min", 1.0)), float(reg.get("r_max", 2.5)))
             self.angle = tuple(float(a) for a in reg.get("angle_deg", [-180.0, 180.0]))
-        elif self.kind == "link_near":
-            self.link = cfg["link"]
-            self.chain = list(cfg["chain"])
-            self.point = list(cfg.get("point") or [0.0, 0.0, 0.0])
+        elif self.kind in ("link_near", "object_in_region"):
+            if self.kind == "link_near":
+                self.link = cfg["link"]
+                self.chain = list(cfg["chain"])
+                self.point = list(cfg.get("point") or [0.0, 0.0, 0.0])
+            else:
+                self.object = cfg["object"]
             reg = cfg.get("region", {"shape": "box", "center": [0.3, 0.0, 0.3], "size": [0.2, 0.2, 0.2]})
             self.center = np.asarray(reg.get("center", [0.0, 0.0, 0.0]), np.float32)
             self.half = 0.5 * np.asarray(reg.get("size", [0.2, 0.2, 0.2]), np.float32) if reg.get("shape", "box") == "box" \
                 else np.full(3, float(reg.get("radius", 0.1)), np.float32)
+            self.planar = bool(cfg.get("planar", self.kind == "object_in_region"))   # 物体は高さを問わない (地面の上を動かす)
         else:
             raise ValueError(f"unknown condition kind {self.kind!r}")
 
@@ -127,20 +131,28 @@ class Condition:
             return (np.asarray(spawn_xy, np.float64) + r * np.array([np.cos(a), np.sin(a)])).astype(np.float32)
         return (self.center + rng.uniform(-self.half, self.half)).astype(np.float32)
 
-    def error(self, goal: np.ndarray, q_by_name: dict[str, float], q: np.ndarray, base_pos: np.ndarray) -> float:
+    def error(self, goal: np.ndarray, ctx: dict[str, Any]) -> float:
+        """ctx: q (行動関節の角度), q_by_name, base_pos (world), objects {name: 根リンク座標系の位置}"""
         if self.kind == "joints_near":
+            q = ctx["q"]
             return float(np.mean(np.abs(q - goal[: len(q)])))
         if self.kind == "base_in_region":
-            return float(np.linalg.norm(goal[:2] - np.asarray(base_pos)[:2]))
+            return float(np.linalg.norm(goal[:2] - np.asarray(ctx["base_pos"])[:2]))
+        if self.kind == "object_in_region":
+            p = np.asarray(ctx["objects"][self.object], np.float32)
+            d = goal[:3] - p
+            if self.planar:
+                d = d[:2]
+            return float(np.linalg.norm(d))
         from .fk import fk_point
-        return float(np.linalg.norm(goal - fk_point(self.chain, q_by_name, self.point)))
+        return float(np.linalg.norm(goal - fk_point(self.chain, ctx["q_by_name"], self.point)))
 
 
 class ConditionTask:
     """task.type == "conditions": 条件の列から報酬・成功・終了を組む。
     報酬項 (reward の重み): progress (誤差の減り分)、distance (誤差)、reached (許容内で 1)、action_rate、velocity。"""
 
-    TERMS = ("progress", "distance", "reached", "action_rate", "velocity")
+    TERMS = ("progress", "distance", "reached", "action_rate", "velocity", "reach_progress", "reach_distance")
 
     def __init__(self, cfg: dict[str, Any], joints: list[str]) -> None:
         self.cfg = cfg
@@ -156,6 +168,16 @@ class ConditionTask:
             raise ValueError("conditions task needs at least one condition")
         self.stop_at_goal = bool(cfg.get("stop_at_goal", False))
         self.hold_steps = int(cfg.get("hold_steps", 0))
+        # 整形 (物体タスク): 手先 (link の点) が物体に近づく分を reach_* で報いる。疎な成功だけでは学習が進まないため
+        self.reach = cfg.get("reach")   # {"link", "chain", "point", "object"} or None
+        self.objects: list[dict[str, Any]] = list(cfg.get("objects", []))
+
+    def reach_distance(self, ctx: dict[str, Any]) -> float | None:
+        if not self.reach:
+            return None
+        from .fk import fk_point
+        p = fk_point(self.reach["chain"], ctx["q_by_name"], self.reach.get("point"))
+        return float(np.linalg.norm(np.asarray(ctx["objects"][self.reach["object"]], np.float32) - p))
 
     def by_kind(self, kind: str) -> Condition | None:
         for c in self.conditions:
@@ -163,7 +185,8 @@ class ConditionTask:
                 return c
         return None
 
-    def reward(self, errs: list[float], prev_errs: list[float], qd, action, prev_action) -> tuple[float, dict[str, float], bool]:
+    def reward(self, errs: list[float], prev_errs: list[float], qd, action, prev_action,
+               reach: float | None = None, prev_reach: float | None = None) -> tuple[float, dict[str, float], bool]:
         reached_all = all(e <= c.tolerance for e, c in zip(errs, self.conditions))
         terms = {
             "progress": float(sum(p - e for p, e in zip(prev_errs, errs))),
@@ -171,6 +194,8 @@ class ConditionTask:
             "reached": 1.0 if reached_all else 0.0,
             "action_rate": float(np.sum(np.abs(action - prev_action))),
             "velocity": float(np.sum(np.abs(qd))),
+            "reach_progress": float(prev_reach - reach) if reach is not None and prev_reach is not None else 0.0,
+            "reach_distance": float(reach) if reach is not None else 0.0,
         }
         contrib = {k: w * terms[k] for k, w in self.weights.items()}
         return float(sum(contrib.values())), contrib, bool(reached_all and self.stop_at_goal)

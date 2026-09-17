@@ -30,7 +30,7 @@ from typing import Any
 from . import draft as draft_mod
 
 SPEC_VERSION = 0
-CONDITION_TYPES = ("joints_near", "base_in_region", "link_near")
+CONDITION_TYPES = ("joints_near", "base_in_region", "link_near", "object_in_region")
 
 
 class TaskSpecError(ValueError):
@@ -51,15 +51,23 @@ def preset(kind: str, urdf: str, name: str | None = None, namespace: str | None 
         goal = [{"type": "link_near", "link": "", "tolerance": 0.03,
                  "region": {"shape": "box", "center": [0.3, 0.0, 0.3], "size": [0.2, 0.2, 0.2]}}]
         episode = {"time_s": 3.0, "hold_s": 0.0}
+    elif kind == "push_object":
+        goal = [{"type": "object_in_region", "object": "cube", "tolerance": 0.05,
+                 "region": {"shape": "box", "center": [0.5, 0.0, 0.0], "size": [0.2, 0.2, 0.0]}}]
+        episode = {"time_s": 6.0, "hold_s": 0.0}
     elif kind == "base_target":
         goal = [{"type": "base_in_region", "tolerance": 0.15,
                  "region": {"shape": "ring", "center": [0.0, 0.0], "r_min": 1.0, "r_max": 2.5, "angle_deg": [-180.0, 180.0]}}]
         episode = {"time_s": 10.0, "hold_s": 0.0}
     else:
-        raise TaskSpecError(f"unknown preset {kind!r} (joint_target | link_target | base_target)")
-    return {"spec_version": SPEC_VERSION, "robot": robot,
+        raise TaskSpecError(f"unknown preset {kind!r} (joint_target | link_target | push_object | base_target)")
+    spec = {"spec_version": SPEC_VERSION, "robot": robot,
             "start": {"joints": "zero", "base": {"xy": [0.0, 0.0], "yaw_deg": [0.0, 0.0]}},
             "goal": goal, "episode": episode, "training": {"n_envs": 8, "success_target": 0.9}}
+    if kind == "push_object":
+        spec["objects"] = [{"name": "cube", "shape": "box", "size": [0.05, 0.05, 0.05], "mass": 0.1,
+                            "start": {"center": [0.3, 0.0, 0.0], "size": [0.1, 0.1, 0.0], "yaw_deg": [-30.0, 30.0]}}]
+    return spec
 
 
 def validate(spec: dict[str, Any]) -> list[str]:
@@ -84,9 +92,12 @@ def validate(spec: dict[str, Any]) -> list[str]:
             r = c.get("region", {})
             if r.get("shape") not in ("ring", "box", "sphere"):
                 problems.append(f"goal[{i}].region.shape は ring | box | sphere")
+    names = {o.get("name") for o in spec.get("objects") or []}
     for i, c in enumerate(goal):
         if c.get("type") == "link_near" and not c.get("link"):
             problems.append(f"goal[{i}] (link_near) は link が要る")
+        if c.get("type") == "object_in_region" and c.get("object") not in names:
+            problems.append(f"goal[{i}] (object_in_region) の object {c.get('object')!r} が objects に無い")
     types = [c.get("type") for c in goal]
     if len(types) != len(set(types)):
         problems.append("同じ種類の終了条件は 1 つまで")
@@ -137,6 +148,10 @@ def estimate_time_s(spec: dict[str, Any], env_steps_per_s: float = 1500.0) -> tu
         tol = float(c.get("tolerance", 0.03))
         steps = 60000 * (0.03 / max(tol, 1e-3)) ** 1.2   # servo の手先 (許容 3 cm) で 5.2 万ステップ
         why = f"手先を領域へ、許容 {tol:g} m、{n_envs} 体並列"
+    elif c.get("type") == "object_in_region":
+        tol = float(c.get("tolerance", 0.05))
+        steps = 250000 * (0.05 / max(tol, 1e-3)) ** 1.2   # 押し (平面腕、許容 5 cm) の目安; 到達より探索が要る
+        why = f"物体を領域へ、許容 {tol:g} m、{n_envs} 体並列"
     else:
         tol = float(c.get("tolerance", 0.05))
         steps = 130000 * (0.05 / max(tol, 1e-3)) ** 1.3
@@ -166,6 +181,11 @@ def generate(spec: dict[str, Any], spec_dir: str = ".") -> tuple[dict[str, Any],
     c = spec["goal"][0]
     tol = float(c["tolerance"])
     task["episode_steps"] = max(1, int(round(float(ep.get("time_s", 2.0)) * rate)))
+    if c["type"] == "object_in_region":
+        _apply_object(spec, c, contract, task, es, urdf, tol)
+        train["n_envs"] = int(spec.get("training", {}).get("n_envs", 8))
+        contract["_task_spec"] = {"spec_version": SPEC_VERSION, "goal": spec["goal"], "episode": ep, "objects": spec.get("objects", [])}
+        return contract, train
     if c["type"] == "link_near":
         _apply_link_near(spec, c, contract, task, es, urdf, tol)
         train["n_envs"] = int(spec.get("training", {}).get("n_envs", 8))
@@ -221,3 +241,50 @@ def _apply_link_near(spec: dict[str, Any], c: dict[str, Any], contract: dict[str
     es.clear()
     es.update({"metric": "success_rate", "threshold": float(spec.get("training", {}).get("success_target", 0.9)), "window": 200, "min_timesteps": 50000})
     contract.setdefault("ros", {})["goal_topic"] = contract.get("ros", {}).get("goal_topic") or f"/{contract['ros'].get('namespace', 'robot')}/policy/command"
+
+
+def _apply_object(spec: dict[str, Any], c: dict[str, Any], contract: dict[str, Any], task: dict[str, Any],
+                  es: dict[str, Any], urdf: str, tol: float) -> None:
+    """物体を領域へ (押す・運ぶ、把持なし): 観測 = q, qd, 手先の位置, 物体の位置, 物体の目標との差, prev_a。
+    報酬は成功に加えて「手先が物体へ近づく」「物体が目標へ近づく」の整形。物体の位置は実機では
+    ros.object_topics[名前] (PoseStamped、根リンク座標系) から取る。"""
+    from .fk import chain_to, load_tree
+    tree = load_tree(urdf)
+    obj = c["object"]
+    hand = spec.get("hand") or c.get("hand")
+    if not hand:
+        movable = [j["child"] for j in tree["joints"].values() if j["type"] in ("revolute", "continuous", "prismatic")]
+        hand = movable[-1] if movable else None
+    reach = None
+    obs = [t for t in contract["observations"] if t.get("source") in ("joint_position", "joint_velocity")]
+    if hand and hand in tree["links"]:
+        chain = chain_to(tree, hand); point = list(c.get("hand_point") or tree["tips"].get(hand, [0.0, 0.0, 0.0]))
+        obs.append({"name": "hand", "source": "link_position", "unit": "m", "scale": 1.0, "link": hand, "point": point, "chain": chain})
+        reach = {"link": hand, "chain": chain, "point": point, "object": obj}
+    obs += [{"name": "obj", "source": "object_position", "unit": "m", "scale": 1.0, "object": obj},
+            {"name": "obj_goal", "source": "object_goal", "unit": "m", "scale": 1.0, "object": obj},
+            {"name": "prev_a", "source": "last_action"}]
+    contract["observations"] = obs
+    # 行動は増分 (relative): 1 ステップ ±max_step [rad] を前回の目標に足す。絶対目標だと探索の乱雑な掃いで
+    # 物体を弾いてしまうので、押す・運ぶは増分で滑らかに動かす
+    rate = float(contract.get("control", {}).get("policy_rate_hz", 25.0))
+    max_step = float(c.get("max_step_rad", 1.5 / rate))   # 既定 1.5 rad/s 相当
+    for a in contract.get("actions", []):
+        if a.get("target") == "joints" and a.get("mode", "position") == "position":
+            a["relative"] = True; a["scale"] = round(max_step, 4); a.pop("offset", None); a["clip"] = [-1.0, 1.0]
+            a["_note"] = f"relative: increment of up to {max_step:.3f} rad per step ({rate:g} Hz)"
+    region = c.get("region") or {"shape": "box", "center": [0.5, 0.0, 0.0], "size": [0.2, 0.2, 0.0]}
+    task.pop("goal_range", None)
+    task["type"] = "conditions"
+    task["objects"] = [dict(o) for o in spec.get("objects", [])]
+    task["conditions"] = [{"kind": "object_in_region", "object": obj, "region": region, "tolerance": tol, "planar": True}]
+    if reach:
+        task["reach"] = reach
+    task["reward"] = {"progress": 5.0, "distance": -0.2, "reached": 1.0, "reach_progress": 2.0, "reach_distance": -0.1, "action_rate": -0.02}
+    task["stop_at_goal"] = False
+    task["_note"] = f"task.json: object {obj} into {region.get('shape')} region (planar), success within {tol} m; reach shaping via {hand}"
+    es.clear()
+    es.update({"metric": "success_rate", "threshold": float(spec.get("training", {}).get("success_target", 0.9)), "window": 200, "min_timesteps": 50000})
+    ros = contract.setdefault("ros", {})
+    ros["goal_topic"] = ros.get("goal_topic") or f"/{ros.get('namespace', 'robot')}/policy/command"
+    ros.setdefault("object_topics", {})[obj] = f"/{ros.get('namespace', 'robot')}/objects/{obj}/pose"

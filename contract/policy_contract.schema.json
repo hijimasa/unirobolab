@@ -154,6 +154,13 @@
         "cmd_vel_topic": {
           "type": "string",
           "description": "geometry_msgs/Twist published by base_twist actions. Default /<namespace>/cmd_vel"
+        },
+        "object_topics": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "object_position / object_goal: topic (geometry_msgs/PoseStamped, in the robot's root-link frame) that gives each object's pose on the real robot (e.g. from a marker detector or motion capture)."
         }
       },
       "patternProperties": {
@@ -286,7 +293,9 @@
             "custom",
             "base_goal_xy",
             "link_position",
-            "link_goal"
+            "link_goal",
+            "object_position",
+            "object_goal"
           ],
           "description": "base_* / projected_gravity / imu_orientation are in the body frame (ROS axes). base_goal_xy (size 2) is the task goal on the ground expressed in the body frame; the deployed node builds it from the goal topic (world x, y) and the robot pose. link_position (size 3) is a point of a link in the robot's root-link frame from forward kinematics of joint_states (chain, point); link_goal (size 3) is the goal point (root-link frame, from the goal topic) minus that link point."
         },
@@ -294,9 +303,15 @@
           "type": "string",
           "description": "link_position / link_goal: the link whose point is tracked."
         },
+        "object": {
+          "type": "string",
+          "description": "object_position / object_goal: the object (task.json objects[].name) whose position, in the robot's root-link frame, is observed. On the real robot it comes from ros.object_topics[object] (geometry_msgs/PoseStamped in the root-link frame)."
+        },
         "point": {
           "type": "array",
-          "items": { "type": "number" },
+          "items": {
+            "type": "number"
+          },
           "minItems": 3,
           "maxItems": 3,
           "description": "link_position / link_goal: the point in the link frame (default: the link origin)."
@@ -304,7 +319,9 @@
         "chain": {
           "type": "array",
           "description": "link_position / link_goal: forward-kinematics steps from the root link to the link (from the URDF: xyz, rpy, and for movable steps joint, axis, type).",
-          "items": { "type": "object" }
+          "items": {
+            "type": "object"
+          }
         },
         "joints": {
           "type": "array",
@@ -461,6 +478,11 @@
           },
           "minItems": 2,
           "maxItems": 2
+        },
+        "relative": {
+          "type": "boolean",
+          "default": false,
+          "description": "position mode only: the processed value is an increment [rad or m per policy step] added to the previous target (initialised from the measured joint position at start / reset); the sum is clamped to safety.joint_limits when present. Smoother exploration for manipulation (pushing) tasks."
         },
         "ros2_control_interface": {
           "type": "string",

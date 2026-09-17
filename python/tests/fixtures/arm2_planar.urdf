@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<!-- 2-DOF planar arm on a fixed base, joints about z, with a paddle at the tip (for pushing objects on the ground).
+     The paddle face is tangential (pushes along the sweep) and the joints are slow (2 rad/s) so a sweep nudges a cube instead of launching it.
+     The links sit above the base cylinder (shoulder at z=0.13) so no link collider overlaps the base: an overlap jams the joint. -->
+<robot name="arm2">
+  <link name="world"/>
+  <joint name="base_joint" type="fixed"><parent link="world"/><child link="base_link"/><origin xyz="0 0 0" rpy="0 0 0"/></joint>
+  <link name="base_link">
+    <inertial><origin xyz="0 0 0.05"/><mass value="2.0"/><inertia ixx="0.01" iyy="0.01" izz="0.01" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><origin xyz="0 0 0.05"/><geometry><cylinder radius="0.06" length="0.1"/></geometry></visual>
+    <collision><origin xyz="0 0 0.05"/><geometry><cylinder radius="0.06" length="0.1"/></geometry></collision>
+  </link>
+  <joint name="shoulder" type="revolute">
+    <parent link="base_link"/><child link="upper_link"/><origin xyz="0 0 0.13" rpy="0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-2.5" upper="2.5" effort="3000" velocity="2.0"/>
+    <drive damping="17.2" stiffness="171.9"/>
+  </joint>
+  <link name="upper_link">
+    <inertial><origin xyz="0.15 0 0"/><mass value="0.5"/><inertia ixx="0.001" iyy="0.004" izz="0.004" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><origin xyz="0.15 0 0"/><geometry><box size="0.3 0.04 0.04"/></geometry></visual>
+    <collision><origin xyz="0.15 0 0"/><geometry><box size="0.3 0.04 0.04"/></geometry></collision>
+  </link>
+  <joint name="elbow" type="revolute">
+    <parent link="upper_link"/><child link="fore_link"/><origin xyz="0.3 0 0" rpy="0 0 0"/><axis xyz="0 0 1"/>
+    <limit lower="-2.5" upper="2.5" effort="3000" velocity="2.0"/>
+    <drive damping="17.2" stiffness="171.9"/>
+  </joint>
+  <link name="fore_link">
+    <inertial><origin xyz="0.15 0 0"/><mass value="0.4"/><inertia ixx="0.001" iyy="0.003" izz="0.003" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><origin xyz="0.15 0 0"/><geometry><box size="0.3 0.04 0.04"/></geometry></visual>
+    <collision><origin xyz="0.15 0 0"/><geometry><box size="0.3 0.04 0.04"/></geometry></collision>
+  </link>
+  <joint name="paddle_joint" type="fixed"><parent link="fore_link"/><child link="paddle_link"/><origin xyz="0.3 0 -0.09" rpy="0 0 0"/></joint>
+  <link name="paddle_link">
+    <inertial><origin xyz="0 0 0"/><mass value="0.1"/><inertia ixx="0.0001" iyy="0.0001" izz="0.0001" ixy="0" ixz="0" iyz="0"/></inertial>
+    <visual><origin xyz="0 0 0"/><geometry><box size="0.10 0.02 0.06"/></geometry></visual>
+    <collision><origin xyz="0 0 0"/><geometry><box size="0.10 0.02 0.06"/></geometry></collision>
+  </link>
+  <ros2_control name="arm2" type="system">
+    <hardware><plugin>fake</plugin></hardware>
+    <joint name="shoulder"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+    <joint name="elbow"><command_interface name="position"/><state_interface name="position"/><state_interface name="velocity"/></joint>
+  </ros2_control>
+</robot>

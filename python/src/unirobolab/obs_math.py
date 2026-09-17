@@ -34,6 +34,15 @@ def process_action_term(raw: np.ndarray, spec: dict) -> tuple[np.ndarray, np.nda
     return a, target
 
 
+def integrate_relative(prev: np.ndarray, delta: np.ndarray, limits: list | None) -> np.ndarray:
+    """relative position actions: previous target + increment, clamped to [lo, hi] per joint when given."""
+    t = np.asarray(prev, np.float32) + np.asarray(delta, np.float32)
+    if limits:
+        lo = np.array([l[0] for l in limits], np.float32); hi = np.array([l[1] for l in limits], np.float32)
+        t = np.clip(t, lo, hi)
+    return t
+
+
 def fk_point(chain: list, q: dict, point=None) -> np.ndarray:
     """chain の段を根から順に適用し、最後のリンク座標系の point (既定: 原点) を根の座標系で返す。"""
     def rpy_rot(r: float, p: float, y: float) -> np.ndarray:

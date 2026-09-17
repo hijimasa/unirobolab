@@ -17,8 +17,8 @@ from stable_baselines3.common.vec_env.base_vec_env import VecEnv
 
 from unirobolab.contract import Contract
 from unirobolab.direct.client import LearningClient, LearningServerError
-from unirobolab.geometry import projected_gravity, quat_to_rot, world_to_body
-from unirobolab.obs_math import process_action_term, process_obs_term
+from unirobolab.geometry import projected_gravity, quat_to_rot, world_to_body, yaw_of
+from unirobolab.obs_math import integrate_relative, process_action_term, process_obs_term
 from unirobolab.task import make_task
 
 
@@ -114,7 +114,27 @@ class DirectVecEnv(VecEnv):
         # conditions タスク: 条件ごとの目標 (kind → 配列) と直前の誤差
         self.cgoals: list[dict[str, np.ndarray]] = [{} for _ in range(n)]
         self.prev_errs: list[list[float]] = [[] for _ in range(n)]
+        self.prev_reach: list[float | None] = [None for _ in range(n)]
+        # 物体: env ごとに複製 (エンティティ名 <robot>__<object>)。状態はロボットと同じ STEP/RESET で返る
+        self.objects: list[dict] = list(task_cfg.get("objects", [])) if self.task.type == "conditions" else []
+        self.obj_entities: list[list[str]] = [[f"{e}__{o['name']}" for o in self.objects] for e in entities]
+        self.obj_states: list[dict[str, "EntityState"]] = [{} for _ in range(n)]
+        if self.objects and spawn_urdf:
+            from unirobolab.objects import write_object_urdfs
+            import os
+            paths = write_object_urdfs(self.objects, os.path.join(os.path.dirname(os.path.abspath(spawn_urdf)), "objects"))
+            for i, e in enumerate(entities):
+                for o in self.objects:
+                    got = self.client.spawn(f"{e}__{o['name']}", paths[o["name"]], 10.0 + i, 10.0, 0.0, 0.0)   # 置き場所は最初のリセットで決める
+                    if got != f"{e}__{o['name']}":
+                        raise RuntimeError(f"object entity name clash: wanted {e}__{o['name']}, got {got}")
         self.last_action = np.zeros((n, c.action_dim), np.float32)
+        # relative position actions: the integrated target per env (reset to the measured q at episode start)
+        self.relative = self.twist_term is None and bool(self.act_term.spec.get("relative")) and self.act_term.spec.get("mode", "position") == "position"
+        self.rel_target = np.zeros((n, len(self.act_joints)), np.float32)
+        self.rel_limits = [c.safety.get("joint_limits", {}).get(j) for j in self.act_joints] if c.safety.get("joint_limits") else None
+        if self.rel_limits is not None and any(l is None for l in self.rel_limits):
+            self.rel_limits = None
         self.frames: list[list[np.ndarray]] = [[] for _ in range(n)]
         self.t = np.zeros(n, int)
         self.episode_terms: list[dict[str, float]] = [{} for _ in range(n)]
@@ -135,6 +155,20 @@ class DirectVecEnv(VecEnv):
     def _q_by_name(self, i: int) -> dict[str, float]:
         st = self.states[i]
         return {n: float(p) for n, p in zip(st.names, st.position)}
+
+    def _root_from_world(self, i: int, p_world: np.ndarray) -> np.ndarray:
+        st = self.states[i]
+        return (quat_to_rot(st.base_quat).T @ (np.asarray(p_world, np.float64) - np.asarray(st.base_pos, np.float64))).astype(np.float32)
+
+    def _world_from_root(self, i: int, p_root: np.ndarray) -> np.ndarray:
+        st = self.states[i]
+        return (quat_to_rot(st.base_quat) @ np.asarray(p_root, np.float64) + np.asarray(st.base_pos, np.float64))
+
+    def _object_positions(self, i: int) -> dict[str, np.ndarray]:
+        return {o["name"]: self._root_from_world(i, self.obj_states[i][o["name"]].base_pos) for o in self.objects if o["name"] in self.obj_states[i]}
+
+    def _ctx(self, i: int) -> dict:
+        return {"q": self._q(i), "q_by_name": self._q_by_name(i), "base_pos": self.states[i].base_pos, "objects": self._object_positions(i)}
 
     def _cond_goal(self, i: int, kind: str, size: int) -> np.ndarray:
         g = self.cgoals[i].get(kind)
@@ -158,6 +192,10 @@ class DirectVecEnv(VecEnv):
                 v = fk_point(t.spec["chain"], self._q_by_name(i), t.spec.get("point"))
             elif s == "link_goal":
                 v = self._cond_goal(i, "link_near", 3) - fk_point(t.spec["chain"], self._q_by_name(i), t.spec.get("point"))
+            elif s == "object_position":
+                v = self._object_positions(i).get(t.spec["object"], np.zeros(3, np.float32))
+            elif s == "object_goal":
+                v = self._cond_goal(i, "object_in_region", 3) - self._object_positions(i).get(t.spec["object"], np.zeros(3, np.float32))
             elif s == "last_action":
                 v = self.last_action[i]
             elif s == "base_lin_vel":
@@ -196,8 +234,19 @@ class DirectVecEnv(VecEnv):
         return (quat_to_rot(st.base_quat).T @ d)[:2]
 
     def _cond_errs(self, i: int) -> list[float]:
-        qmap = self._q_by_name(i); q = self._q(i); st = self.states[i]
-        return [c.error(self.cgoals[i][c.kind], qmap, q, st.base_pos) for c in self.task.conditions]
+        ctx = self._ctx(i)
+        return [c.error(self.cgoals[i][c.kind], ctx) for c in self.task.conditions]
+
+    def _place_objects(self, i: int) -> None:
+        """エピソード開始: 各物体を開始条件の範囲 (根リンク座標系) から抽選した位置・向きへ置く。"""
+        for o in self.objects:
+            st = o.get("start", {})
+            c = np.asarray(st.get("center", [0.3, 0.0, 0.0]), np.float64); half = 0.5 * np.asarray(st.get("size", [0.1, 0.1, 0.0]), np.float64)
+            p_root = c + self.rng.uniform(-half, half)
+            yaw_rng = st.get("yaw_deg", [0.0, 0.0])
+            yaw = np.deg2rad(self.rng.uniform(float(yaw_rng[0]), float(yaw_rng[1]))) + yaw_of(self.states[i].base_quat)
+            p_world = self._world_from_root(i, p_root)
+            self.obj_states[i][o["name"]] = self.client.set_pose(f"{self.entities[i]}__{o['name']}", float(p_world[0]), float(p_world[1]), float(p_world[2]), float(yaw))
 
     def _dist(self, i: int) -> float:
         return float(np.linalg.norm(self.goal[i][:2] - self.states[i].base_pos[:2]))
@@ -205,8 +254,11 @@ class DirectVecEnv(VecEnv):
     def _begin_episode(self, i: int) -> None:
         if self.task.type == "conditions":
             self.spawn_xy[i] = self.states[i].base_pos[:2]
+            if self.objects:
+                self._place_objects(i)
             self.cgoals[i] = {c.kind: c.sample(self.rng, self.spawn_xy[i]) for c in self.task.conditions}
             self.prev_errs[i] = self._cond_errs(i)
+            self.prev_reach[i] = self.task.reach_distance(self._ctx(i))
         elif self.task.type == "joint_target":
             self.goal[i] = self.task.sample_joint_goal(self.rng)
         else:
@@ -214,6 +266,8 @@ class DirectVecEnv(VecEnv):
             self.goal[i] = self.task.sample_base_goal(self.rng, self.spawn_xy[i])
             self.prev_dist[i] = self._dist(i)
         self.last_action[i] = 0.0
+        if self.relative:
+            self.rel_target[i] = self._q(i)[[self.c.joints.index(j) for j in self.act_joints]]
         self.frames[i] = []
         self.t[i] = 0
         self.action_queue[i] = [np.zeros(self.c.action_dim, np.float32) for _ in range(self.latency)]
@@ -221,9 +275,40 @@ class DirectVecEnv(VecEnv):
         self.last_q[i] = self._q(i)
 
     # -------------------------------------------------------------- VecEnv
+    def _all_names(self) -> list[str]:
+        return list(self.entities) + [o for objs in self.obj_entities for o in objs]
+
+    def _split(self, states: list) -> list:
+        """STEP/RESET の応答 (ロボット + 物体) をロボット分と物体分に分ける。"""
+        n = self.num_envs
+        robots = states[:n]
+        k = n
+        for i in range(n):
+            for o in self.objects:
+                self.obj_states[i][o["name"]] = states[k]; k += 1
+        return robots
+
+    def _step_all(self, steps: int, commands: list) -> tuple[list, float]:
+        if not self.objects:
+            return self.client.step(self.entities, steps, commands)
+        states, t = self.client.step(self._all_names(), steps, commands + [{"name": []} for _ in range(len(self.objects) * self.num_envs)])
+        return self._split(states), t
+
+    def _reset_all(self, indices: list[int] | None = None) -> tuple[list, float]:
+        if indices is None:
+            indices = list(range(self.num_envs))
+        names = [self.entities[i] for i in indices] + [o for i in indices for o in self.obj_entities[i]]
+        states, t = self.client.reset(names)
+        robots = states[:len(indices)]
+        k = len(indices)
+        for i in indices:
+            for o in self.objects:
+                self.obj_states[i][o["name"]] = states[k]; k += 1
+        return robots, t
+
     def reset(self) -> np.ndarray:
         t0 = time.perf_counter()
-        self.states, _ = self.client.reset(self.entities)
+        self.states, _ = self._reset_all()
         self.rpc_time += time.perf_counter() - t0
         for i in range(self.num_envs):
             self._begin_episode(i)
@@ -253,9 +338,12 @@ class DirectVecEnv(VecEnv):
                 mode = "velocity"
             else:
                 mode = self.act_term.spec.get("mode", "position")
+                if self.relative:
+                    target = integrate_relative(self.rel_target[i], target, self.rel_limits)
+                    self.rel_target[i] = target
             commands.append({"name": list(self.act_joints), mode: target})
         t0 = time.perf_counter()
-        self.states, _ = self.client.step(self.entities, self.task.steps_per_action, commands)
+        self.states, _ = self._step_all(self.task.steps_per_action, commands)
         self.rpc_time += time.perf_counter() - t0
         self.step_count += 1
 
@@ -271,8 +359,9 @@ class DirectVecEnv(VecEnv):
             self.last_q[i] = q
             if self.task.type == "conditions":
                 errs = self._cond_errs(i)
-                r, contrib, reached = self.task.reward(errs, self.prev_errs[i], qd, self.last_action[i], prev_actions[i])
-                self.prev_errs[i] = errs
+                reach = self.task.reach_distance(self._ctx(i))
+                r, contrib, reached = self.task.reward(errs, self.prev_errs[i], qd, self.last_action[i], prev_actions[i], reach, self.prev_reach[i])
+                self.prev_errs[i] = errs; self.prev_reach[i] = reach
                 info = {"goal": np.concatenate([np.asarray(self.cgoals[i][c.kind]).ravel() for c in self.task.conditions]),
                         "q": q.copy(), "abs_err": float(max(errs)), "errs": list(errs),
                         "cond_ok": all(e <= c.tolerance for e, c in zip(errs, self.task.conditions))}
@@ -306,9 +395,8 @@ class DirectVecEnv(VecEnv):
                 obs[i] = self._obs(i)
             infos.append(info)
         if to_reset:
-            names = [self.entities[i] for i in to_reset]
             t0 = time.perf_counter()
-            new_states, _ = self.client.reset(names)
+            new_states, _ = self._reset_all(to_reset)
             self.rpc_time += time.perf_counter() - t0
             for i, st in zip(to_reset, new_states):
                 self.states[i] = st

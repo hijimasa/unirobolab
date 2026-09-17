@@ -270,7 +270,15 @@ def cmd_live(a) -> int:
     c = _load(a.contract, a.schema)
     goal = [float(v) for v in a.goal.split(",")] if a.goal else None
     entity = a.entity or (c.ros.namespace if c.ros else "robot")
-    return live.run(c, entity, a.onnx or c.onnx_path, a.host, a.port, goal, a.duration, a.log, play=not a.no_play)
+    objects = None
+    if a.objects_from:
+        import json, os
+        with open(a.objects_from, encoding="utf-8") as f:
+            d = json.load(f)
+        objects = d.get("objects") or (d.get("task") or {}).get("objects") or []
+    objects_dir = a.objects_dir or os.path.join(os.path.dirname(os.path.abspath(a.contract)), "objects")
+    return live.run(c, entity, a.onnx or c.onnx_path, a.host, a.port, goal, a.duration, a.log, play=not a.no_play,
+                    objects=objects, objects_dir=objects_dir)
 
 
 def cmd_train(a) -> int:
@@ -387,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
     s.set_defaults(fn=lambda a: (print(__import__("json").dumps(__import__("unirobolab.draft", fromlist=["robot_info"]).robot_info(a.urdf))), 0)[1])
 
     s = sub.add_parser("task-preset", help="write an example task.json (joint_target | base_target) for a URDF")
-    s.add_argument("kind", choices=["joint_target", "link_target", "base_target"])
+    s.add_argument("kind", choices=["joint_target", "link_target", "push_object", "base_target"])
     s.add_argument("--urdf", required=True)
     s.add_argument("--out", required=True)
     s.add_argument("--name"); s.add_argument("--namespace")
@@ -412,6 +420,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=10100)
     s.add_argument("--no-play", action="store_true", help="do not switch the simulation to PLAYING")
+    s.add_argument("--objects-from", help="task.json or train.json whose objects[] define the objects the contract observes")
+    s.add_argument("--objects-dir", help="where the object URDFs are written (default: <contract dir>/objects)")
     s.set_defaults(fn=cmd_live)
 
     s = sub.add_parser("train", help="train a policy for the contract (needs ROS 2 + the simulator)")

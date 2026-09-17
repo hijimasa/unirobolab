@@ -25,6 +25,8 @@ FIXED_SIZE_OBS_SOURCES = {
     "base_goal_xy": 2,
     "link_position": 3,
     "link_goal": 3,
+    "object_position": 3,
+    "object_goal": 3,
 }
 
 

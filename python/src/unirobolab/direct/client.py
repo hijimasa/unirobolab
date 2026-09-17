@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-OP_INFO, OP_RESET, OP_STEP, OP_PING, OP_PAUSE, OP_SPAWN, OP_PLAY = 1, 2, 3, 4, 5, 6, 7
+OP_INFO, OP_RESET, OP_STEP, OP_PING, OP_PAUSE, OP_SPAWN, OP_PLAY, OP_SET_POSE = 1, 2, 3, 4, 5, 6, 7, 8
 
 
 class LearningServerError(RuntimeError):
@@ -140,6 +140,12 @@ class LearningClient:
     def info(self, entities: list[str]) -> list[EntityState]:
         payload = bytes([OP_INFO]) + struct.pack("<H", len(entities)) + b"".join(self._s(e) for e in entities)
         return self._parse_states(self._rpc(payload))[0]
+
+    def set_pose(self, entity: str, x: float, y: float, z: float, yaw: float) -> EntityState:
+        """エンティティの基体を (x, y, z, yaw) [ROS 座標, rad] へ置き直し、速度を 0 にする。以後の RESET もここへ戻る。"""
+        payload = bytes([OP_SET_POSE]) + self._s(entity) + struct.pack("<dddd", x, y, z, yaw)
+        states, _ = self._parse_states(self._rpc(payload))
+        return states[0]
 
     def reset(self, entities: list[str]) -> tuple[list[EntityState], float]:
         payload = bytes([OP_RESET]) + struct.pack("<H", len(entities)) + b"".join(self._s(e) for e in entities)
