@@ -66,6 +66,13 @@ class LivePolicy:
         self._objects_def = objects or []
         self.obj_states: dict[str, "EntityState"] = {}
         self.objects = self._setup_objects(self._objects_def, objects_dir)
+        # 学習で変えた質量・摩擦・ゲインが残っていれば公称値に戻す (古いプレイヤーでは非対応)
+        try:
+            for ent in [entity] + [self._obj_entity(n) for n in self.objects]:
+                self.client.set_dynamics(ent, 1.0, -1.0, 1.0)
+        except Exception as err:  # noqa: BLE001
+            if "unknown op" not in str(err):
+                raise
 
     def _obj_entity(self, name: str) -> str:
         return f"{self.entity}__{name}"

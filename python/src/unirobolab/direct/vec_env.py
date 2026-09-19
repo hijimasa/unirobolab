@@ -142,6 +142,8 @@ class DirectVecEnv(VecEnv):
         # "drive_gain": [lo, hi] 倍率}。抽選した値は info["dynamics"] に出す (特権情報として後で使える)
         self.randomize: dict = task_cfg.get("randomize") or {}
         self.dynamics: list[dict] = [{} for _ in range(n)]
+        # 前回の学習で変えた質量・摩擦・ゲインが残らないよう、まず全エンティティを公称値に戻す (古いプレイヤーでは非対応)
+        self._reset_dynamics_all()
         # relative position actions: the integrated target per env (reset to the measured q at episode start)
         self.relative = self.twist_term is None and bool(self.act_term.spec.get("relative")) and self.act_term.spec.get("mode", "position") == "position"
         self.rel_target = np.zeros((n, len(self.act_joints)), np.float32)
@@ -249,6 +251,16 @@ class DirectVecEnv(VecEnv):
     def _cond_errs(self, i: int) -> list[float]:
         ctx = self._ctx(i)
         return [c.error(self.cgoals[i][c.kind], ctx) for c in self.task.conditions]
+
+    def _reset_dynamics_all(self) -> None:
+        try:
+            for i, e in enumerate(self.entities):
+                self.client.set_dynamics(e, 1.0, -1.0, 1.0)
+                for o in self.objects:
+                    self.client.set_dynamics(f"{e}__{o['name']}", 1.0, -1.0, 1.0)
+        except LearningServerError as err:
+            if "unknown op" not in str(err):
+                raise
 
     def set_start_fraction(self, fraction: float) -> None:
         """開始姿勢の幅 (可動範囲に対する割合) を変える (カリキュラム用)。"""
