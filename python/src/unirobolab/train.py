@@ -65,6 +65,9 @@ class _EpisodeLogger:
         self.status_path = status_path
         self.status_ctx = status_ctx or {}
         self._status_t = 0.0
+        self.checkpoint = None          # callable(model) set by run(); saves model.zip + policy.onnx
+        self.checkpoint_every = 0
+        self._ckpt_at = 0
 
         class CB(BaseCallback):
             def __init__(self):
@@ -102,6 +105,13 @@ class _EpisodeLogger:
                 if outer.status_path and now - outer._status_t >= 1.0:
                     outer._status_t = now
                     outer.write_status("training", now - self.t0)
+                # 途中保存: シミュレータが落ちても学習の成果が丸ごと消えないよう、一定ステップごとに model と ONNX を書く
+                if outer.checkpoint_every > 0 and self.num_timesteps - outer._ckpt_at >= outer.checkpoint_every and outer.checkpoint:
+                    outer._ckpt_at = self.num_timesteps
+                    try:
+                        outer.checkpoint(self.model)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"checkpoint failed: {e}", flush=True)
                 return True
 
         self.rows: list[dict] = []
@@ -351,6 +361,14 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
                                         "tolerance": tolerance, "window": int(es.get("window", 200)) if es else 200,
                                         "early_stop": es or None})
     callbacks = [logger.callback]
+
+    def _checkpoint(model) -> None:
+        model.save(os.path.join(out_dir, "model.zip"))
+        export_onnx(model, c, os.path.join(out_dir, "policy.onnx"))
+        print(f"checkpoint at {model.num_timesteps} steps", flush=True)
+
+    logger.checkpoint = _checkpoint
+    logger.checkpoint_every = int(train.get("checkpoint_every", 50000))
     curriculum = None
     sj = task.get("start_joints") if isinstance(task, dict) else None
     if sj and sj.get("mode") == "random" and sj.get("curriculum", True) and hasattr(env, "set_start_fraction"):
