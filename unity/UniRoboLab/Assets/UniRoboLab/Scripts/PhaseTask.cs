@@ -28,6 +28,8 @@ public class PhaseTask : Phase
     TMP_Text m_Kind, m_RangeL, m_TolL, m_TimeL, m_RMinL, m_RMaxL, m_Estimate, m_TrainText;
     Slider m_Range, m_Tol, m_Time, m_RMin, m_RMax, m_Yaw;
     TMP_InputField m_StartX, m_StartY; TMP_Text m_YawL;
+    Ui.Choice m_StartJoints; Slider m_StartFrac; TMP_Text m_StartFracL; GameObject m_StartFracRow;   // 開始姿勢: ゼロ / ばらつかせる
+    Ui.Choice m_Randomize, m_History;   // 物理のばらつき (質量・摩擦・駆動) と履歴窓
     GameObject m_JointBox, m_BaseBox;
     Ui.Choice m_RangeMode;
     ExternalProcess m_Gen, m_Est;
@@ -51,6 +53,14 @@ public class PhaseTask : Phase
         m_YawL = Ui.Label(sp.transform, "", 12f, Ui.Text, false, 0f, 130f);
         m_Yaw = Ui.Slider(Root.transform, -180f, 180f, 180f, v => { m_YawL.text = Ui.T($"向き {v:F0}°", $"yaw {v:F0}°"); TouchStart(); }, true);
         m_StartX.onEndEdit.AddListener(_ => TouchStart()); m_StartY.onEndEdit.AddListener(_ => TouchStart());
+        var sj = Ui.Row(Root.transform, 26f);
+        Ui.Label(sj.transform, Ui.T("開始の関節姿勢", "Start joint pose"), 12f, Ui.Text, false, 0f, 110f);
+        m_StartJoints = new Ui.Choice(sj.transform, new[] { Ui.T("ゼロ (URDF の原点)", "zero (URDF origin)"), Ui.T("毎回ばらつかせる", "randomized every attempt") }, 0, 24f);
+        m_StartJoints.OnChange = i => { if (m_StartFracRow != null) m_StartFracRow.SetActive(i == 1); TouchStart(); };
+        m_StartFracRow = Ui.Row(Root.transform, 26f);
+        m_StartFracL = Ui.Label(m_StartFracRow.transform, "", 12f, Ui.Text, false, 0f, 220f);
+        m_StartFrac = Ui.Slider(m_StartFracRow.transform, 0.1f, 1f, 0.5f, v => { m_StartFracL.text = Ui.T($"可動範囲の {v * 100f:F0} % の中から抽選", $"sampled inside {v * 100f:F0} % of the joint range"); TouchStart(); });
+        m_StartFracRow.SetActive(false);
         Ui.Label(Root.transform, Ui.T("終了 (成功) の条件", "Goal (success) condition"), 12f, Ui.Muted);
         // joints_near
         m_JointBox = Ui.Column(Root.transform, "Joint", 4f, 0, false);
@@ -108,6 +118,15 @@ public class PhaseTask : Phase
         m_Tol = Ui.Slider(Root.transform, 0.01f, 0.5f, 0.05f, v => { m_TolL.text = m_IsBase || m_IsLink || m_IsObject ? Ui.T($"成功: 目標から {v:F3} m 以内", $"success: within {v:F3} m") : Ui.T($"成功: 目標角から {v:F3} rad 以内", $"success: within {v:F3} rad"); Touch(); });
         m_TimeL = Ui.Label(Root.transform, "", 12f, Ui.Text);
         m_Time = Ui.Slider(Root.transform, 0.5f, 30f, 2f, v => { m_TimeL.text = Ui.T($"1 回の制限時間: {v:F1} 秒", $"time per attempt: {v:F1} s"); Touch(); });
+        var rz = Ui.Row(Root.transform, 26f);
+        Ui.Label(rz.transform, Ui.T("物理のばらつき", "Physics randomization"), 12f, Ui.Text, false, 0f, 110f);
+        m_Randomize = new Ui.Choice(rz.transform, new[] { Ui.T("なし", "off"), Ui.T("あり (質量 ×0.5〜2、摩擦 0.2〜1.0、駆動 ×0.7〜1.3)", "on (mass x0.5-2, friction 0.2-1.0, drive x0.7-1.3)") }, 0, 24f);
+        m_Randomize.OnChange = _ => Touch();
+        var hr = Ui.Row(Root.transform, 26f);
+        Ui.Label(hr.transform, Ui.T("方策の履歴窓", "Policy history window"), 12f, Ui.Text, false, 0f, 110f);
+        m_History = new Ui.Choice(hr.transform, new[] { Ui.T("今の観測だけ", "current observation only"), Ui.T("直近 8 回 (状況を推定できる)", "last 8 frames (infers the situation)") }, 0, 24f);
+        m_History.OnChange = _ => Touch();
+        Ui.Label(Root.transform, Ui.T("実機とのずれ (物体の重さ・滑りやすさ、モータの応答) に強くするなら両方を入れます。学習は少し長くなります", "Turn both on for robustness to sim-to-real gaps (object mass and friction, motor response); training takes a little longer"), 11f, Ui.Muted, true, 30f);
         m_Estimate = Ui.Label(Root.transform, "", 12f, Ui.Accent, true, 40f);
         Ui.Label(Root.transform, Ui.T("「次へ」で契約と学習設定を生成します (学習はまだ始めません)。", "Next generates the contract and the training config (training does not start yet)."), 11f, Ui.Muted, true, 30f);
         Ui.Spacer(Root.transform);
@@ -126,6 +145,8 @@ public class PhaseTask : Phase
         if (m_Spec == null) return;
         float.TryParse(m_StartX.text, out float x); float.TryParse(m_StartY.text, out float y);
         m_Spec.start.@base.xy = new[] { x, y }; m_Spec.start.@base.yaw_deg = new[] { m_Yaw.value, m_Yaw.value };
+        m_Spec.start.joints = m_StartJoints.Index == 1 ? "random" : "zero"; m_Spec.start.joints_fraction = m_StartFrac.value;
+        m_EstAt = Time.realtimeSinceStartup + 0.6f;
         m_Spec.Save(P.Abs(P.D.task));
         var buf = new List<GameObject>(); W.Sim.GetEntitiesSnapshot(buf);
         foreach (GameObject e in buf) if (e != null) { W.PlaceSpawned(e.name, x, y, m_Yaw.value); break; }
@@ -178,12 +199,17 @@ public class PhaseTask : Phase
         m_Tol.minValue = m_IsBase ? 0.05f : 0.005f; m_Tol.maxValue = m_IsBase || m_IsLink || m_IsObject ? 1f : 0.5f;
         m_Tol.value = g.tolerance > 0f ? g.tolerance : (m_IsBase ? 0.15f : 0.05f);
         m_Time.value = m_Spec.episode.time_s > 0f ? m_Spec.episode.time_s : (m_IsBase ? 10f : 2f);
+        var rzs = m_Spec.training.randomize;
+        m_Randomize.Set(rzs != null && ((rzs.object_mass != null && rzs.object_mass.Length == 2) || (rzs.drive_gain != null && rzs.drive_gain.Length == 2)) ? 1 : 0);
+        m_History.Set(m_Spec.training.history_length > 1 ? 1 : 0);
         if (m_IsBase) { m_RMin.value = g.region.r_min; m_RMax.value = g.region.r_max; }
         else { bool manual = g.range != null && g.range.Length == 2; m_RangeMode.Set(manual ? 1 : 0); if (manual) m_Range.value = Mathf.Max(Mathf.Abs(g.range[0]), Mathf.Abs(g.range[1])); }
         m_Tol.onValueChanged.Invoke(m_Tol.value); m_Time.onValueChanged.Invoke(m_Time.value);
         var sb = m_Spec.start.@base;
         m_StartX.text = (sb.xy != null && sb.xy.Length > 0 ? sb.xy[0] : 0f).ToString("F2"); m_StartY.text = (sb.xy != null && sb.xy.Length > 1 ? sb.xy[1] : 0f).ToString("F2");
         m_Yaw.SetValueWithoutNotify(sb.yaw_deg != null && sb.yaw_deg.Length > 0 ? sb.yaw_deg[0] : 180f); m_YawL.text = Ui.T($"向き {m_Yaw.value:F0}°", $"yaw {m_Yaw.value:F0}°");
+        m_StartJoints.Set(m_Spec.start.joints == "random" ? 1 : 0); m_StartFracRow.SetActive(m_Spec.start.joints == "random");
+        m_StartFrac.SetValueWithoutNotify(m_Spec.start.joints_fraction > 0f ? m_Spec.start.joints_fraction : 0.5f); m_StartFracL.text = Ui.T($"可動範囲の {m_StartFrac.value * 100f:F0} % の中から抽選", $"sampled inside {m_StartFrac.value * 100f:F0} % of the joint range");
         DrawGoal();
         RefreshDetails();
         W.Status(Ui.T("成功の条件と制限時間を決めて「次へ」", "Set the success condition and the time limit, then Next"));
@@ -193,6 +219,14 @@ public class PhaseTask : Phase
     {
         SpecGoal g = m_Spec.Goal0;
         g.tolerance = m_Tol.value; m_Spec.episode.time_s = m_Time.value;
+        if (m_Spec.training.randomize == null) m_Spec.training.randomize = new SpecRandomize();
+        if (m_Randomize.Index == 1)
+        {
+            m_Spec.training.randomize.drive_gain = new[] { 0.7f, 1.3f };
+            bool obj = m_IsObject; m_Spec.training.randomize.object_mass = obj ? new[] { 0.5f, 2f } : new float[0]; m_Spec.training.randomize.object_friction = obj ? new[] { 0.2f, 1f } : new float[0];
+        }
+        else { m_Spec.training.randomize.drive_gain = new float[0]; m_Spec.training.randomize.object_mass = new float[0]; m_Spec.training.randomize.object_friction = new float[0]; }
+        m_Spec.training.history_length = m_History.Index == 1 ? 8 : 1;
         if (m_IsBase) { g.type = "base_in_region"; g.region.shape = "ring"; g.region.r_min = m_RMin.value; g.region.r_max = m_RMax.value; }
         else if (m_IsLink)
         {

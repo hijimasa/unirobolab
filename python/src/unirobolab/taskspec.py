@@ -88,6 +88,8 @@ def validate(spec: dict[str, Any]) -> list[str]:
         problems.append("start.joints_fraction は 0 より大きく 1 以下")
     rz = spec.get("training", {}).get("randomize") or {}
     for k, v in rz.items():
+        if isinstance(v, list) and len(v) == 0:
+            continue   # GUI (JsonUtility) は未指定を空配列で書く
         if k not in RANDOMIZE_KEYS:
             problems.append(f"training.randomize.{k} は未対応 ({', '.join(RANDOMIZE_KEYS)})")
         elif not (isinstance(v, list) and len(v) == 2 and float(v[0]) <= float(v[1]) and float(v[0]) >= 0):

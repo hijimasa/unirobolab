@@ -6,7 +6,7 @@ using UnityEngine;
 /// <summary>task.json (docs/ux-flow.md v2.1、python/src/unirobolab/taskspec.py と同じ形)。GUI が書く唯一の JSON。</summary>
 [Serializable] public class SpecRobot { public string urdf = ""; public string name = ""; public string @namespace = ""; public string command_mode = "joint_state_topic"; public string controller = ""; public string estop_topic = ""; }
 [Serializable] public class SpecBase { public float[] xy = { 0f, 0f }; public float[] yaw_deg = { 180f, 180f }; /* 既定: 正面がカメラを向く */ }
-[Serializable] public class SpecStart { public string joints = "zero"; public SpecBase @base = new SpecBase(); }
+[Serializable] public class SpecStart { public string joints = "zero"; /* zero | random */ public float joints_fraction = 0.5f; public SpecBase @base = new SpecBase(); }
 [Serializable] public class SpecRegion { public string shape = "ring"; public float[] center = { 0f, 0f }; public float r_min = 1f; public float r_max = 2.5f; public float[] angle_deg = { -180f, 180f }; public float[] size = { 1f, 1f }; public float radius = 0.5f; }
 /* link_near の region は center/size が 3 要素 (根リンク座標系 [m]) */
 [Serializable] public class SpecGoal { public string type = "joints_near"; public float[] range = new float[0]; public float tolerance = 0.05f; public SpecRegion region = new SpecRegion(); public bool stop_at_goal = false; public string link = ""; public float[] point = new float[0]; public string @object = ""; public string hand = ""; }
@@ -14,7 +14,9 @@ using UnityEngine;
 [Serializable] public class SpecObjectStart { public float[] center = { 0.3f, 0f, 0f }; public float[] size = { 0.1f, 0.1f, 0f }; public float[] yaw_deg = { 0f, 0f }; }
 [Serializable] public class SpecObject { public string name = "cube"; public string shape = "box"; public float[] size = { 0.05f, 0.05f, 0.05f }; public float mass = 0.1f; public SpecObjectStart start = new SpecObjectStart(); }
 [Serializable] public class SpecEpisode { public float time_s = 2f; public float hold_s = 0f; }
-[Serializable] public class SpecTraining { public int n_envs = 8; public float success_target = 0.9f; }
+/* 物理のばらつき (domain randomization): 空配列 = 指定なし。object_mass / drive_gain は倍率 [下限, 上限]、object_friction は係数 */
+[Serializable] public class SpecRandomize { public float[] object_mass = new float[0]; public float[] object_friction = new float[0]; public float[] drive_gain = new float[0]; }
+[Serializable] public class SpecTraining { public int n_envs = 8; public float success_target = 0.9f; public SpecRandomize randomize = new SpecRandomize(); public int history_length = 1; }
 [Serializable]
 public class TaskSpec
 {
