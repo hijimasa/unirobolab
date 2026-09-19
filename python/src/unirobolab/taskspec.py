@@ -70,6 +70,9 @@ def preset(kind: str, urdf: str, name: str | None = None, namespace: str | None 
     return spec
 
 
+RANDOMIZE_KEYS = ("object_mass", "object_friction", "drive_gain")
+
+
 def validate(spec: dict[str, Any]) -> list[str]:
     """人が読める問題の一覧 (空なら OK)。"""
     problems = []
@@ -77,6 +80,21 @@ def validate(spec: dict[str, Any]) -> list[str]:
         problems.append(f"spec_version は {SPEC_VERSION} (got {spec.get('spec_version')})")
     if not spec.get("robot", {}).get("urdf"):
         problems.append("robot.urdf が無い")
+    sj = spec.get("start", {}).get("joints", "zero")
+    if sj not in ("zero", "random"):
+        problems.append(f"start.joints は zero か random (got {sj!r})")
+    fr = spec.get("start", {}).get("joints_fraction", 0.5)
+    if not isinstance(fr, (int, float)) or not 0.0 < float(fr) <= 1.0:
+        problems.append("start.joints_fraction は 0 より大きく 1 以下")
+    rz = spec.get("training", {}).get("randomize") or {}
+    for k, v in rz.items():
+        if k not in RANDOMIZE_KEYS:
+            problems.append(f"training.randomize.{k} は未対応 ({', '.join(RANDOMIZE_KEYS)})")
+        elif not (isinstance(v, list) and len(v) == 2 and float(v[0]) <= float(v[1]) and float(v[0]) >= 0):
+            problems.append(f"training.randomize.{k} は [下限, 上限] (0 以上)")
+    hl = spec.get("training", {}).get("history_length", 1)
+    if not isinstance(hl, int) or hl < 1 or hl > 32:
+        problems.append("training.history_length は 1〜32 の整数")
     goal = spec.get("goal") or []
     if not goal:
         problems.append("終了条件 (goal) が 1 つも無い")
@@ -181,6 +199,15 @@ def generate(spec: dict[str, Any], spec_dir: str = ".") -> tuple[dict[str, Any],
     c = spec["goal"][0]
     tol = float(c["tolerance"])
     task["episode_steps"] = max(1, int(round(float(ep.get("time_s", 2.0)) * rate)))
+    # 開始姿勢のばらつき (domain randomization、状態側): 各エピソードの関節を可動範囲の fraction 倍の中から抽選
+    if spec.get("start", {}).get("joints", "zero") == "random" and task.get("type") != "base_target":
+        task["start_joints"] = {"mode": "random", "fraction": float(spec.get("start", {}).get("joints_fraction", 0.5))}
+    tr = spec.get("training", {})
+    # 物理のばらつき (domain randomization、動力学側) と、履歴窓 (方策が直近の観測・行動から状況を推定できる)
+    if tr.get("randomize"):
+        task["randomize"] = {k: [float(v[0]), float(v[1])] for k, v in tr["randomize"].items() if k in RANDOMIZE_KEYS and isinstance(v, list) and len(v) == 2}
+    if int(tr.get("history_length", 1)) > 1:
+        contract.setdefault("policy", {})["history_length"] = int(tr["history_length"])
     if c["type"] == "object_in_region":
         _apply_object(spec, c, contract, task, es, urdf, tol)
         train["n_envs"] = int(spec.get("training", {}).get("n_envs", 8))

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-OP_INFO, OP_RESET, OP_STEP, OP_PING, OP_PAUSE, OP_SPAWN, OP_PLAY, OP_SET_POSE = 1, 2, 3, 4, 5, 6, 7, 8
+OP_INFO, OP_RESET, OP_STEP, OP_PING, OP_PAUSE, OP_SPAWN, OP_PLAY, OP_SET_POSE, OP_SET_JOINTS, OP_SET_DYNAMICS = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
 
 
 class LearningServerError(RuntimeError):
@@ -144,6 +144,19 @@ class LearningClient:
     def set_pose(self, entity: str, x: float, y: float, z: float, yaw: float) -> EntityState:
         """エンティティの基体を (x, y, z, yaw) [ROS 座標, rad] へ置き直し、速度を 0 にする。以後の RESET もここへ戻る。"""
         payload = bytes([OP_SET_POSE]) + self._s(entity) + struct.pack("<dddd", x, y, z, yaw)
+        states, _ = self._parse_states(self._rpc(payload))
+        return states[0]
+
+    def set_joints(self, entity: str, names: list[str], positions) -> EntityState:
+        """関節を指定の位置 [rad / m] へ直接置く (速度 0、駆動目標も同じ値)。物理は進めない。エピソード開始姿勢のばらつき用。"""
+        payload = bytes([OP_SET_JOINTS]) + self._s(entity) + struct.pack("<H", len(names))
+        payload += b"".join(self._s(n) + struct.pack("<d", float(v)) for n, v in zip(names, positions))
+        states, _ = self._parse_states(self._rpc(payload))
+        return states[0]
+
+    def set_dynamics(self, entity: str, mass_scale: float = 1.0, friction: float = -1.0, drive_scale: float = 1.0) -> EntityState:
+        """質量 (倍率)、摩擦 (係数の値、負で元に戻す)、駆動ゲイン (倍率) をスポーン時の値に対して変える (domain randomization)。"""
+        payload = bytes([OP_SET_DYNAMICS]) + self._s(entity) + struct.pack("<ddd", mass_scale, friction, drive_scale)
         states, _ = self._parse_states(self._rpc(payload))
         return states[0]
 

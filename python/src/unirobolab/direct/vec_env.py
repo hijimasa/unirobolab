@@ -135,6 +135,11 @@ class DirectVecEnv(VecEnv):
                     if got != ent:
                         raise RuntimeError(f"object entity name clash: wanted {ent}, got {got}")
         self.last_action = np.zeros((n, c.action_dim), np.float32)
+        self.start_joints = task_cfg.get("start_joints") if self.twist_term is None else None
+        # 物理の domain randomization (エピソードごと): {"object_mass": [lo, hi] 倍率, "object_friction": [lo, hi] 係数,
+        # "drive_gain": [lo, hi] 倍率}。抽選した値は info["dynamics"] に出す (特権情報として後で使える)
+        self.randomize: dict = task_cfg.get("randomize") or {}
+        self.dynamics: list[dict] = [{} for _ in range(n)]
         # relative position actions: the integrated target per env (reset to the measured q at episode start)
         self.relative = self.twist_term is None and bool(self.act_term.spec.get("relative")) and self.act_term.spec.get("mode", "position") == "position"
         self.rel_target = np.zeros((n, len(self.act_joints)), np.float32)
@@ -243,6 +248,22 @@ class DirectVecEnv(VecEnv):
         ctx = self._ctx(i)
         return [c.error(self.cgoals[i][c.kind], ctx) for c in self.task.conditions]
 
+    def _randomize_dynamics(self, i: int) -> None:
+        """エピソードごとに物体の質量・摩擦とロボットの駆動ゲインを抽選して SET_DYNAMICS で反映する。"""
+        rz = self.randomize
+        u = lambda key: float(self.rng.uniform(float(rz[key][0]), float(rz[key][1]))) if rz.get(key) else None
+        d = {}
+        g = u("drive_gain")
+        if g is not None:
+            self.states[i] = self.client.set_dynamics(self.entities[i], 1.0, -1.0, g); d["drive_gain"] = g
+        m, f = u("object_mass"), u("object_friction")
+        if (m is not None or f is not None) and self.objects:
+            for o in self.objects:
+                self.obj_states[i][o["name"]] = self.client.set_dynamics(f"{self.entities[i]}__{o['name']}", m if m is not None else 1.0, f if f is not None else -1.0, 1.0)
+            if m is not None: d["object_mass"] = m
+            if f is not None: d["object_friction"] = f
+        self.dynamics[i] = d
+
     def _place_objects(self, i: int) -> None:
         """エピソード開始: 各物体を開始条件の範囲 (根リンク座標系) から抽選した位置・向きへ置く。"""
         for o in self.objects:
@@ -258,6 +279,14 @@ class DirectVecEnv(VecEnv):
         return float(np.linalg.norm(self.goal[i][:2] - self.states[i].base_pos[:2]))
 
     def _begin_episode(self, i: int) -> None:
+        if self.start_joints is not None and self.start_joints.get("mode") == "random":
+            # 開始姿勢のばらつき: 関節を可動範囲 (safety.joint_limits) の fraction 倍の中から抽選して直接置く
+            fr = float(self.start_joints.get("fraction", 0.5))
+            lim = self.c.safety.get("joint_limits") or {}
+            q0 = np.array([self.rng.uniform(fr * lim[j][0], fr * lim[j][1]) if j in lim else self.rng.uniform(-fr, fr) for j in self.act_joints], np.float32)
+            self.states[i] = self.client.set_joints(self.entities[i], list(self.act_joints), q0)
+        if self.randomize:
+            self._randomize_dynamics(i)
         if self.task.type == "conditions":
             self.spawn_xy[i] = self.states[i].base_pos[:2]
             if self.objects:
@@ -395,6 +424,8 @@ class DirectVecEnv(VecEnv):
                                                     and info["abs_err"] <= self.task.reach_radius) \
                     or (self.task.type == "conditions" and bool(info.get("cond_ok")))
                 info["episode_terms"] = dict(self.episode_terms[i])
+                if self.dynamics[i]:
+                    info["dynamics"] = dict(self.dynamics[i])
                 info["terminal_observation"] = self._obs(i)
                 to_reset.append(i)
             else:

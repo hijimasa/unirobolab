@@ -71,3 +71,30 @@ def test_robot_info_shape():
     info = robot_info(str(FIX / "servo_demo.urdf"))
     assert info["fixed_base"] and [j["name"] for j in info["joints"]] == ["ideal_joint", "cheap_joint"]
     assert info["joints"][0]["mode"] == "position" and info["joints"][0]["upper"] > 0
+
+
+def test_random_start_joints_reach_train_config(tmp_path):
+    from unirobolab.taskspec import generate, preset, validate
+    from pathlib import Path
+    fix = Path(__file__).parent / "fixtures" / "arm2_planar.urdf"
+    spec = preset("push_object", str(fix), name="arm2")
+    spec["start"]["joints"] = "random"; spec["start"]["joints_fraction"] = 0.6
+    assert validate(spec) == []
+    _, t = generate(spec, str(tmp_path))
+    assert t["task"]["start_joints"] == {"mode": "random", "fraction": 0.6}
+    spec["start"]["joints"] = "sometimes"
+    assert any("start.joints" in p for p in validate(spec))
+
+
+def test_randomize_and_history_reach_configs(tmp_path):
+    from unirobolab.taskspec import generate, preset, validate
+    from pathlib import Path
+    fix = Path(__file__).parent / "fixtures" / "arm2_planar.urdf"
+    spec = preset("push_object", str(fix), name="arm2")
+    spec["training"]["randomize"] = {"object_mass": [0.5, 2.0], "object_friction": [0.2, 1.0], "drive_gain": [0.7, 1.3]}
+    spec["training"]["history_length"] = 8
+    assert validate(spec) == []
+    c, t = generate(spec, str(tmp_path))
+    assert t["task"]["randomize"]["object_mass"] == [0.5, 2.0] and c["policy"]["history_length"] == 8
+    spec["training"]["randomize"] = {"gravity": [1, 2]}
+    assert any("randomize.gravity" in p for p in validate(spec))
