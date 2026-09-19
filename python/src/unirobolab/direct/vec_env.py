@@ -136,6 +136,8 @@ class DirectVecEnv(VecEnv):
                         raise RuntimeError(f"object entity name clash: wanted {ent}, got {got}")
         self.last_action = np.zeros((n, c.action_dim), np.float32)
         self.start_joints = task_cfg.get("start_joints") if self.twist_term is None else None
+        # カリキュラム: 開始姿勢の幅は set_start_fraction で学習中に広げられる (既定は設定値そのまま)
+        self.start_fraction = float(self.start_joints.get("fraction", 0.5)) if self.start_joints else 0.0
         # 物理の domain randomization (エピソードごと): {"object_mass": [lo, hi] 倍率, "object_friction": [lo, hi] 係数,
         # "drive_gain": [lo, hi] 倍率}。抽選した値は info["dynamics"] に出す (特権情報として後で使える)
         self.randomize: dict = task_cfg.get("randomize") or {}
@@ -248,6 +250,10 @@ class DirectVecEnv(VecEnv):
         ctx = self._ctx(i)
         return [c.error(self.cgoals[i][c.kind], ctx) for c in self.task.conditions]
 
+    def set_start_fraction(self, fraction: float) -> None:
+        """開始姿勢の幅 (可動範囲に対する割合) を変える (カリキュラム用)。"""
+        self.start_fraction = float(fraction)
+
     def _randomize_dynamics(self, i: int) -> None:
         """エピソードごとに物体の質量・摩擦とロボットの駆動ゲインを抽選して SET_DYNAMICS で反映する。"""
         rz = self.randomize
@@ -281,7 +287,7 @@ class DirectVecEnv(VecEnv):
     def _begin_episode(self, i: int) -> None:
         if self.start_joints is not None and self.start_joints.get("mode") == "random":
             # 開始姿勢のばらつき: 関節を可動範囲 (safety.joint_limits) の fraction 倍の中から抽選して直接置く
-            fr = float(self.start_joints.get("fraction", 0.5))
+            fr = self.start_fraction
             lim = self.c.safety.get("joint_limits") or {}
             reach = getattr(self.task, "reach", None) if self.task.type == "conditions" else None
             for _ in range(20):

@@ -17,6 +17,10 @@ from unirobolab.direct.vec_env import DirectVecEnv
 
 
 class PoolVecEnv(VecEnv):
+    def set_start_fraction(self, fraction: float) -> None:
+        for e in self.envs:
+            e.set_start_fraction(fraction)
+
     def __init__(self, envs: list[DirectVecEnv]) -> None:
         self.envs = envs
         self.pool = ThreadPoolExecutor(max_workers=len(envs))

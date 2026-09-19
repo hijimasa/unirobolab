@@ -120,6 +120,8 @@ class _EpisodeLogger:
         st = train_status(self.rows, ctx.get("total_timesteps", 0), ctx.get("n_envs", 1), wall_s,
                           tolerance=ctx.get("tolerance"), window=ctx.get("window", 200),
                           early_stop=ctx.get("early_stop"), phase=phase)
+        if ctx.get("extra"):
+            st.update(ctx["extra"])
         if extra:
             st.update(extra)
         tmp = self.status_path + ".tmp"
@@ -129,6 +131,42 @@ class _EpisodeLogger:
 
     def close(self):
         self.f.close()
+
+
+class _StartCurriculum:
+    """開始姿勢の幅のカリキュラム。ロールアウトごとに直近 window 回の成功率を見て、閾値以上なら幅を step 広げる。
+    いきなり広い幅で始めると (25 % でも) 学習が立ち上がらないことがあるので、ゼロ姿勢で覚えてから広げる。"""
+
+    def __init__(self, env, logger, fraction_max: float, window: int, success_to_grow: float, step: float):
+        from stable_baselines3.common.callbacks import BaseCallback
+        outer = self
+        self.env = env
+        self.fraction = 0.0
+        self.fraction_max = fraction_max
+        self.window = max(window, 8 * getattr(env, "num_envs", 1))
+        self.success_to_grow = success_to_grow
+        self.step = step
+        env.set_start_fraction(0.0)
+        logger.status_ctx["extra"] = {"start_fraction": 0.0, "start_fraction_max": fraction_max}
+
+        class CB(BaseCallback):
+            def _on_step(self) -> bool:
+                return True
+
+            def _on_rollout_end(self) -> None:
+                if outer.fraction >= outer.fraction_max or len(logger.rows) < outer.grown_at + outer.window:
+                    return
+                recent = logger.rows[-outer.window:]
+                if float(np.mean([r.get("success", 0.0) for r in recent])) >= outer.success_to_grow:
+                    outer.fraction = min(outer.fraction_max, outer.fraction + outer.step)
+                    outer.env.set_start_fraction(outer.fraction)
+                    logger.status_ctx["extra"]["start_fraction"] = round(outer.fraction, 3)
+                    # 広げた直後の成功率で続けて広げないよう、窓を新しいエピソードで埋め直す
+                    outer.grown_at = len(logger.rows)
+                    print(f"curriculum: start fraction -> {outer.fraction:.2f} at {self.num_timesteps} steps", flush=True)
+
+        self.grown_at = 0
+        self.callback = CB()
 
 
 class _EarlyStop:
@@ -313,6 +351,13 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
                                         "tolerance": tolerance, "window": int(es.get("window", 200)) if es else 200,
                                         "early_stop": es or None})
     callbacks = [logger.callback]
+    curriculum = None
+    sj = task.get("start_joints") if isinstance(task, dict) else None
+    if sj and sj.get("mode") == "random" and sj.get("curriculum", True) and hasattr(env, "set_start_fraction"):
+        # 開始姿勢のカリキュラム: 幅 0 から始め、直近の成功率が閾値を超えるたびに広げる (最終的に設定の fraction まで)
+        curriculum = _StartCurriculum(env, logger, float(sj.get("fraction", 0.5)), int(es.get("window", 200)) if es else 200,
+                                      float(sj.get("curriculum_success", 0.5)), float(sj.get("curriculum_step", 0.05)))
+        callbacks.append(curriculum.callback)
     early = None
     if train.get("early_stop"):
         early = _EarlyStop(train["early_stop"], logger.rows, n_envs)
