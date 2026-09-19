@@ -362,10 +362,29 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
                                         "early_stop": es or None})
     callbacks = [logger.callback]
 
+    best = {"score": -1.0, "steps": 0}
+
+    def _window_score() -> float | None:
+        window = int(es.get("window", 200)) if es else 200
+        window = max(window, 8 * n_envs)
+        if len(logger.rows) < window:
+            return None
+        recent = logger.rows[-window:]
+        if tolerance is not None and (task.get("type") in ("conditions", "base_target") or "success" in recent[0]):
+            return float(np.mean([r.get("success", 0.0) for r in recent]))
+        return -float(np.mean([r["final_abs_err"] for r in recent]))
+
     def _checkpoint(model) -> None:
+        # 最後の方策ではなく、直近の窓で最も良かった方策を残す (PPO は終盤に崩れることがある:
+        # 押すタスクで窓の成功率 53 % → 28 % に落ちた例)。policy.onnx = 最良、policy_last.onnx = 最後。
         model.save(os.path.join(out_dir, "model.zip"))
-        export_onnx(model, c, os.path.join(out_dir, "policy.onnx"))
-        print(f"checkpoint at {model.num_timesteps} steps", flush=True)
+        export_onnx(model, c, os.path.join(out_dir, "policy_last.onnx"))
+        score = _window_score()
+        if score is not None and score >= best["score"]:
+            best["score"], best["steps"] = score, int(model.num_timesteps)
+            model.save(os.path.join(out_dir, "model_best.zip"))
+            export_onnx(model, c, os.path.join(out_dir, "policy.onnx"))
+        print(f"checkpoint at {model.num_timesteps} steps (window score {score if score is None else round(score, 3)}, best {round(best['score'], 3)} at {best['steps']})", flush=True)
 
     logger.checkpoint = _checkpoint
     logger.checkpoint_every = int(train.get("checkpoint_every", 50000))
@@ -400,9 +419,12 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
           + (" [early stop]" if stopped_early else ""), flush=True)
     logger.write_status("evaluating", wall, {"stopped_early": stopped_early})
 
-    model.save(os.path.join(out_dir, "model.zip"))
+    _checkpoint(model)   # 最後の状態も候補に入れる (最良なら policy.onnx を更新)
     onnx_path = os.path.join(out_dir, "policy.onnx")
-    export_onnx(model, c, onnx_path)
+    if best["steps"] > 0 and best["steps"] != int(model.num_timesteps):
+        print(f"policy.onnx = best window score {best['score']:.3f} at {best['steps']} steps (last is policy_last.onnx)", flush=True)
+        from stable_baselines3 import PPO as _PPO
+        model = _PPO.load(os.path.join(out_dir, "model_best.zip"), env=env, device="cpu")
     plot_curve(logger.rows, weights, os.path.join(out_dir, "learning_curve.png"))
 
     ev = evaluate(model, env, int(train["eval_episodes"]))
