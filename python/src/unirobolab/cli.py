@@ -281,6 +281,23 @@ def cmd_live(a) -> int:
                     objects=objects, objects_dir=objects_dir)
 
 
+def cmd_eval(a) -> int:
+    import json as _json
+    from unirobolab import evaluate
+    c = _load(a.contract, a.schema)
+    with open(a.config, encoding="utf-8") as f:
+        cfg = _json.load(f)
+    ns = c.ros.namespace if c.ros else "robot"
+    ents = [ns] if a.n_envs == 1 else [f"{ns}_{i}" for i in range(a.n_envs)]
+    res = evaluate.run(c, cfg, a.onnx or c.onnx_path, a.rounds, a.port, ents, a.spawn_urdf,
+                       _json.loads(a.task_override) if a.task_override else None)
+    if a.out:
+        with open(a.out, "w", encoding="utf-8") as f:
+            _json.dump(res, f, indent=2)
+    print(_json.dumps({k: v for k, v in res.items() if k != "per_episode"}))
+    return 0
+
+
 def cmd_train(a) -> int:
     from unirobolab import train
     ents = a.entities.split(",") if a.entities else None
@@ -423,6 +440,18 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--objects-from", help="task.json or train.json whose objects[] define the objects the contract observes")
     s.add_argument("--objects-dir", help="where the object URDFs are written (default: <contract dir>/objects)")
     s.set_defaults(fn=cmd_live)
+
+    s = sub.add_parser("eval", help="evaluate a policy (ONNX) in the learning environment, optionally under other conditions")
+    add_contract(s)
+    s.add_argument("--config", required=True, help="train JSON (task section)")
+    s.add_argument("--onnx", help="policy file (default: the contract's)")
+    s.add_argument("--rounds", type=int, default=5, help="episodes per entity")
+    s.add_argument("--port", type=int, default=10100)
+    s.add_argument("--n-envs", type=int, default=8)
+    s.add_argument("--spawn-urdf")
+    s.add_argument("--task-override", help='JSON merged into the task, e.g. \'{"randomize": null, "start_joints": {"mode": "random", "fraction": 0.5}}\'')
+    s.add_argument("--out", help="write the result JSON here")
+    s.set_defaults(fn=cmd_eval)
 
     s = sub.add_parser("train", help="train a policy for the contract (needs ROS 2 + the simulator)")
     add_contract(s)

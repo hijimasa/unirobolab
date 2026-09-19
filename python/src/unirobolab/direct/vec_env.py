@@ -283,7 +283,17 @@ class DirectVecEnv(VecEnv):
             # 開始姿勢のばらつき: 関節を可動範囲 (safety.joint_limits) の fraction 倍の中から抽選して直接置く
             fr = float(self.start_joints.get("fraction", 0.5))
             lim = self.c.safety.get("joint_limits") or {}
-            q0 = np.array([self.rng.uniform(fr * lim[j][0], fr * lim[j][1]) if j in lim else self.rng.uniform(-fr, fr) for j in self.act_joints], np.float32)
+            reach = getattr(self.task, "reach", None) if self.task.type == "conditions" else None
+            for _ in range(20):
+                q0 = np.array([self.rng.uniform(fr * lim[j][0], fr * lim[j][1]) if j in lim else self.rng.uniform(-fr, fr) for j in self.act_joints], np.float32)
+                if not (reach and self.objects):
+                    break
+                # 物体タスク: 手先が物体の開始位置の真上に来る姿勢は避ける (テレポートで物体に食い込む)
+                from unirobolab.fk import fk_point
+                hand = fk_point(reach["chain"], dict(zip(self.act_joints, q0.tolist())), reach.get("point"))
+                clear = all(np.linalg.norm(hand[:2] - np.asarray(o.get("start", {}).get("center", [0.3, 0.0, 0.0])[:2])) > 0.15 for o in self.objects)
+                if clear:
+                    break
             self.states[i] = self.client.set_joints(self.entities[i], list(self.act_joints), q0)
         if self.randomize:
             self._randomize_dynamics(i)
