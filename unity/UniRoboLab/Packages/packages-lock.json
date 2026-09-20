@@ -55,9 +55,9 @@
       "hash": "ff9f9a07f970f68435613782703fc7d1bdbcab10"
     },
     "com.react-robot.simulation-core": {
-      "version": "file:../../../../Unity_ROS2_Robot_Simulator/Packages/SimulationCore",
+      "version": "https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator.git?path=/Packages/SimulationCore#fcd29854a23f57f96be17ea6ef32b2c0f6c6f205",
       "depth": 0,
-      "source": "local",
+      "source": "git",
       "dependencies": {
         "com.react-robot.servo-model": "1.0.0",
         "com.react-robot.sdf-world": "1.0.0",
@@ -65,7 +65,8 @@
         "com.react-robot.hydrodynamics": "1.0.0",
         "com.react-robot.aerodynamics": "1.0.0",
         "com.unity.ugui": "2.0.0"
-      }
+      },
+      "hash": "fcd29854a23f57f96be17ea6ef32b2c0f6c6f205"
     },
     "com.react-robot.urdf-properties": {
       "version": "https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator.git?path=/Packages/UrdfProperties#ff9f9a07f970f68435613782703fc7d1bdbcab10",

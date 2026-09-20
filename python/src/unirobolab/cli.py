@@ -224,6 +224,7 @@ def cmd_task_preset(a) -> int:
     # URDF は仕様ファイルからの相対パスで持つ (プロジェクトのフォルダごと動かせるように)
     urdf = os.path.relpath(os.path.abspath(a.urdf), os.path.dirname(os.path.abspath(a.out)))
     spec = preset(a.kind, urdf, a.name, a.namespace)
+    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w") as f:
         _json.dump(spec, f, indent=2, ensure_ascii=False); f.write("\n")
     print(f"wrote {a.out}")

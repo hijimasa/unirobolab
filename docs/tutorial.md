@@ -8,8 +8,10 @@ UniRoboLab の画面だけで、ロボットの URDF から「学習 → 試す 
 
 ## 0. 準備 (一度だけ)
 
-- プレイヤーを作る: `scripts/build_player.sh` → `generated/player/UniRoboLab.x86_64`
-- Python 環境を作る: `scripts/setup_python.sh --training` (`.venv` ができ、画面が自動で見つけます)
+- プレイヤーを用意する: リリースの zip を展開すると `player/` に入っています (zip 内の README 参照)。
+  ソースから作るなら `scripts/build_player.sh` → `generated/player/UniRoboLab.x86_64`
+- Python 環境を作る: `scripts/setup_python.sh --training` (`.venv` ができ、画面が自動で見つけます。
+  Windows は `powershell -ExecutionPolicy Bypass -File scripts\setup_python.ps1 -Training`)
 - 配備前チェック (⑤) には ROS 2 が要ります。この PC に無ければ同梱のコンテナを使います:
   `scripts/sim2sim_container.sh start` (⑤ の画面の「コンテナを起動」でも同じことができます)
 
@@ -17,6 +19,7 @@ UniRoboLab の画面だけで、ロボットの URDF から「学習 → 試す 
 
 ```bash
 scripts/unirobolab_gui.sh ~/unirobolab_projects/servo   # 引数はプロジェクトのフォルダ (無ければ作られる)
+# リリース版: ./UniRoboLab.sh ~/unirobolab_projects/servo (Windows: UniRoboLab.cmd %USERPROFILE%\unirobolab_projects\servo)
 ```
 
 設定ファイルを書く必要はありません。学習用のサーバは既定で有効です。
