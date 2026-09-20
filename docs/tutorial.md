@@ -12,8 +12,9 @@ UniRoboLab の画面だけで、ロボットの URDF から「学習 → 試す 
   ソースから作るなら `scripts/build_player.sh` → `generated/player/UniRoboLab.x86_64`
 - Python 環境を作る: `scripts/setup_python.sh --training` (`.venv` ができ、画面が自動で見つけます。
   Windows は `powershell -ExecutionPolicy Bypass -File scripts\setup_python.ps1 -Training`)
-- 配備前チェック (⑤) には ROS 2 が要ります。この PC に無ければ同梱のコンテナを使います:
-  `scripts/sim2sim_container.sh start` (⑤ の画面の「コンテナを起動」でも同じことができます)
+- 配備前チェック (⑤) には ROS 2 が要ります。この PC に無ければ Docker を入れておけば、⑤ の画面の
+  「コンテナを起動」(または `scripts/sim2sim_container.sh start`) が ROS 2 のコンテナを用意します
+  (初回はイメージの作成に 10 分ほど)
 
 起動:
 

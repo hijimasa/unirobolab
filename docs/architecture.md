@@ -931,3 +931,21 @@ Project(プロジェクトと失効)+ Env(環境検出)+ TaskSpec(task.json の�
 - 課題: 評価のばらつきが大きい (40 エピソードでは ±10 %)。RMA 型 (特権情報) は未着手で、契約に
   「学習時のみの観測項」の印が要る。学習中の成功率が乱高下するので学習率・エントロピーの調整と
   複数シードの比較が要る。GUI の学習の目安はカリキュラム・DR を織り込んでいない。
+
+## 29. ⑤ のコンテナを自己完結にする、リリースの組み立て、レビュー手順書 (2026-09-20)
+
+- **コンテナ** (`docker/Dockerfile`): それまで Unity_ROS2_sample のイメージ (シミュレータ本体入り 4.5 GB) から
+  派生し、その colcon_ws をマウントしていた。利用者にサンプルリポジトリのクローンとイメージ作成を要求する
+  のは重いので、`ros:jazzy-ros-base` に ROS-TCP-Endpoint (hijimasa フォーク 6c683a3)、simulation_interfaces
+  (2.1.0)、simulation_ros2_utils (34c2ba1、simulation_extra_interfaces 込み)、topic_based_ros2_control
+  (e273bce) をコミット固定でソースビルドした 1.3 GB のイメージにした。シミュレータ本体は入れない
+  (ホストの UniRoboLab プレイヤーが --net=host のエンドポイントに繋ぐ)。torch / sb3 も入れない (学習は
+  ROS 2 を通らない)。`sim2sim_container.sh start` はイメージが無ければ作る。servo の ⑤ で PASS を確認。
+  落とし穴: `colcon build --symlink-install` のあとに build/ を消すと install/ のリンクが切れる。
+- **リリース** (`scripts/make_release.sh`): player/ + python/ + scripts/ + contract/ + docs/tutorial + 同梱
+  README を実行時の配置で zip にする (Linux 40 MB、Windows 44 MB)。プレイヤーは自分の場所から上へ
+  `python/src/unirobolab` を探すので展開先がそのまま作業環境。manifest の simulation-core は本体 main
+  (fcd2985) の git 参照 (push 済み)。Windows はビルドのみ (bash.exe 経由、未検証)。
+- **補助スクリプト**: `project_init.sh` (URDF からプロジェクトを作る = ① で URDF を選んだ状態)、
+  `wizard_capture.sh` (フェーズ指定で起動して撮影)。初見 UX レビューの手順書は
+  `docs/reviews/2026-09-20-ux-review-guide.md`。

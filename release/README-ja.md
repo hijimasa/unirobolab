@@ -14,7 +14,7 @@ UniRoboLab は、Unity のシミュレータでロボットの方策を学習し
 | | Linux (x86_64) | Windows (x64) |
 |---|---|---|
 | ①〜④ (学習して試す) | Ubuntu 22.04 / 24.04、Vulkan か OpenGL が動く GPU | Windows 10 / 11、**Git for Windows** (補助コマンドを `bash.exe` で動かします)、PowerShell |
-| ⑤ (ROS 2 経由のチェック) | この PC の ROS 2 Jazzy、**または** Docker と、このフォルダの隣に置いた [Unity_ROS2_sample](https://github.com/hijimasa/Unity_ROS2_sample) のクローン | 未対応 (Linux の PC か、WSL 2 上で Linux 版を使ってください) |
+| ⑤ (ROS 2 経由のチェック) | この PC の ROS 2 Jazzy、**または** Docker (初回に 1.3 GB の ROS 2 イメージを作ります) | 未対応 (Linux の PC か、WSL 2 上で Linux 版を使ってください) |
 | ⑥ (実機へ) | ロボット側の ROS 2 ワークスペース | 同じ |
 
 Python はセットアップスクリプトが [uv](https://astral.sh/uv) でこのフォルダの中 (`.venv`) に入れます。
@@ -41,10 +41,9 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_python.ps1 -Training
 あとは [docs/tutorial.md](docs/tutorial.md) の ① から進めてください。窓の上に 6 段階が並び、
 今の段階が青、済んだ段階が緑で示されます。下の状態行に「次に何をするか」と、ボタンが押せない理由が出ます。
 
-Linux で ROS 2 が入っていない PC の ⑤: `Unity_ROS2_sample` のクローンをこのフォルダの隣に置き
-(別の場所なら `UNITY_ROS2_SAMPLE` にパスを設定)、そのリポジトリの手順で Docker イメージを作ってから、
-`scripts/sim2sim_container.sh build` を一度、⑤ の前に `scripts/sim2sim_container.sh start` を実行します
-(⑤ の画面の「コンテナを起動」でも同じことができます)。
+Linux で ROS 2 が入っていない PC の ⑤: Docker を入れ (自分のユーザーで `docker` が使えること)、⑤ の画面の
+「コンテナを起動」を押すか `scripts/sim2sim_container.sh start` を実行します。初回は `docker/Dockerfile` から
+ROS 2 のイメージを作ります (10 分ほど、ネットワークが要ります)。2 回目からは数秒で立ち上がります。
 
 ## フォルダの中身
 

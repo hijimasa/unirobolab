@@ -50,10 +50,10 @@ nothing to open in the editor for a normal build. The build log is `generated/lo
 Release zips (player + `python/` + `scripts/` + `contract/` + tutorial, in the layout the player
 expects at run time): `scripts/make_release.sh` after building both players.
 
-Step ⑤ needs ROS 2. Without it on the host, `scripts/sim2sim_container.sh start` runs a ROS 2 Jazzy
-container built from [Unity_ROS2_sample](https://github.com/hijimasa/Unity_ROS2_sample) (clone it
-next to this repository, build its image, then `scripts/sim2sim_container.sh build` once for the
-derived image with the Python extras).
+Step ⑤ needs ROS 2. Without it on the host, `scripts/sim2sim_container.sh start` runs a self-contained
+ROS 2 Jazzy container (`docker/Dockerfile`: ros-base plus the ROS-TCP endpoint, simulation_interfaces,
+simulation_ros2_utils and topic_based_ros2_control built from pinned sources; about 1.3 GB). The image
+is built on the first start (about 10 minutes, network needed); the ⑤ screen has a button for it.
 
 Tests: `PYTHONPATH=python/src pytest python/tests` (no simulator needed).
 

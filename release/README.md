@@ -14,7 +14,7 @@ The step-by-step guide with screenshots is [docs/tutorial.md](docs/tutorial.md).
 | | Linux (x86_64) | Windows (x64) |
 |---|---|---|
 | Steps ① to ④ (train and try) | Ubuntu 22.04 / 24.04, a GPU with Vulkan or OpenGL | Windows 10 / 11, **Git for Windows** (the tool runs its helpers through `bash.exe`), PowerShell |
-| Step ⑤ (check through ROS 2) | ROS 2 Jazzy on this machine, **or** Docker plus a clone of [Unity_ROS2_sample](https://github.com/hijimasa/Unity_ROS2_sample) next to this folder | not available yet (use a Linux machine or WSL 2 with the Linux zip) |
+| Step ⑤ (check through ROS 2) | ROS 2 Jazzy on this machine, **or** Docker (the tool builds a 1.3 GB ROS 2 image on first use) | not available yet (use a Linux machine or WSL 2 with the Linux zip) |
 | Step ⑥ (deploy) | a ROS 2 workspace on the robot side | same |
 
 Python is installed by the setup script into this folder (`.venv`) through [uv](https://astral.sh/uv);
@@ -42,10 +42,10 @@ Then follow [docs/tutorial.md](docs/tutorial.md) from step ①. The window shows
 top; the current one is blue, finished ones green. The status line at the bottom tells you what to do
 next and why a button is disabled.
 
-For step ⑤ on Linux without ROS 2 installed: put a clone of `Unity_ROS2_sample` next to this folder
-(or set `UNITY_ROS2_SAMPLE` to its path), build its Docker image as described in that repository,
-then run `scripts/sim2sim_container.sh build` once and `scripts/sim2sim_container.sh start` before
-step ⑤ (the ⑤ screen also has a button for this).
+For step ⑤ on Linux without ROS 2 installed: install Docker (your user must be able to run `docker`),
+then press "Start container" on the ⑤ screen or run `scripts/sim2sim_container.sh start`. The first
+start builds the ROS 2 image from `docker/Dockerfile` (about 10 minutes, network needed); later
+starts take seconds.
 
 ## What is in this folder
 

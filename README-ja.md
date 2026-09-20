@@ -47,10 +47,10 @@ scripts/unirobolab_gui.sh ~/unirobolab_projects/first          # GUI を起動
 リリース用の zip (プレイヤー + `python/` + `scripts/` + `contract/` + チュートリアルを、プレイヤーが実行時に
 期待する配置で): 両方のプレイヤーをビルドしたあと `scripts/make_release.sh`。
 
-⑤ には ROS 2 が要ります。ホストに無ければ `scripts/sim2sim_container.sh start` が
-[Unity_ROS2_sample](https://github.com/hijimasa/Unity_ROS2_sample) から作った ROS 2 Jazzy のコンテナを使います
-(このリポジトリの隣にクローンし、そのイメージを作ってから、Python 拡張入りの派生イメージを
-`scripts/sim2sim_container.sh build` で一度作ります)。
+⑤ には ROS 2 が要ります。ホストに無ければ `scripts/sim2sim_container.sh start` が自己完結の ROS 2 Jazzy
+コンテナを使います (`docker/Dockerfile`: ros-base に ROS-TCP エンドポイント、simulation_interfaces、
+simulation_ros2_utils、topic_based_ros2_control をコミット固定のソースからビルド、約 1.3 GB)。イメージは
+初回の start で作られます (10 分ほど、ネットワークが要ります)。⑤ の画面のボタンでも同じことができます。
 
 テスト: `PYTHONPATH=python/src pytest python/tests` (シミュレータ不要)。
 

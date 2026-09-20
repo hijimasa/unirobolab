@@ -68,7 +68,7 @@ public class PhaseCheck : Phase
         {
             "host" => Ui.T("ROS 2: この PC で実行します", "ROS 2: runs on this machine"),
             "container" => Ui.T("ROS 2: コンテナ (unirobolab-sim2sim) で実行します。プロジェクトはリポジトリ配下にある必要があります", "ROS 2: runs in the unirobolab-sim2sim container (the project must be inside the repository)"),
-            "docker-only" => Ui.T("ROS 2: 無し。コンテナを起動すると実行できます (初回はイメージの取得に時間がかかります)", "ROS 2: none; start the container to run the check (first start pulls the image)"),
+            "docker-only" => Ui.T("ROS 2: 無し。コンテナを起動すると実行できます (初回はイメージの作成に 10 分ほどかかります)", "ROS 2: none; start the container to run the check (the first start builds the image, about 10 minutes)"),
             _ => Ui.T("ROS 2 も Docker も見つかりません。チェックは ROS 2 のある環境で実行してください", "Neither ROS 2 nor Docker found; run the check where ROS 2 is available"),
         };
         m_Env.color = canRun ? Ui.Text : Ui.Warn;
