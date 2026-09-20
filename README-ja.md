@@ -87,7 +87,7 @@ Git for Windows の `bash.exe` で動かす作りで、実機ではまだ試し�
 | `python/` | パッケージ `unirobolab`: タスク仕様 → 契約 + 学習設定、PPO 学習器、試運転、ROS 2 パッケージ生成、sim2sim 評価器、配備手順書 |
 | `scripts/` | プレイヤーのビルド、GUI の起動、Python 環境 (bash / PowerShell)、ROS 2 コンテナ、⑤ の実行器、リリース zip の組み立て |
 | `release/` | リリース zip に同梱する README |
-| `docker/` | ROS 2 コンテナの派生イメージ (onnxruntime、torch-cpu、stable-baselines3) |
+| `docker/` | ⑤ 用の自己完結の ROS 2 イメージ (ros-base + チェックに要る ROS 2 パッケージをコミット固定でビルド) |
 | `docs/` | 設計と結果 (`architecture.md`)、動線 (`ux-flow.md`)、チュートリアルと画面 |
 
 ## ライセンス

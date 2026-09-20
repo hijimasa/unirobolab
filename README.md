@@ -95,7 +95,7 @@ hardware yet; evaluation of a trained policy varies by about ±10 % over 40 epis
 | `python/` | Package `unirobolab`: task spec → contract + training config, PPO trainer, live runner, ROS 2 package generator, sim2sim evaluator, deployment guide |
 | `scripts/` | Player build, GUI launcher, Python setup (bash / PowerShell), ROS 2 container, ⑤ runner, release assembly |
 | `release/` | README files shipped inside the release zips |
-| `docker/` | Derived image for the ROS 2 container (onnxruntime, torch-cpu, stable-baselines3) |
+| `docker/` | Self-contained ROS 2 image for the ⑤ check (ros-base + the ROS 2 packages the check needs, built from pinned sources) |
 | `docs/` | Design notes and results (`architecture.md`), UX flow (`ux-flow.md`), tutorial and screenshots |
 
 ## License
