@@ -59,7 +59,7 @@ public class PhaseTask : Phase
         m_StartJoints.OnChange = i => { if (m_StartFracRow != null) m_StartFracRow.SetActive(i == 1); TouchStart(); };
         m_StartFracRow = Ui.Row(Root.transform, 26f);
         m_StartFracL = Ui.Label(m_StartFracRow.transform, "", 12f, Ui.Text, false, 0f, 220f);
-        m_StartFrac = Ui.Slider(m_StartFracRow.transform, 0.1f, 1f, 0.5f, v => { m_StartFracL.text = Ui.T($"可動範囲の {v * 100f:F0} % の中から抽選", $"sampled inside {v * 100f:F0} % of the joint range"); TouchStart(); });
+        m_StartFrac = Ui.Slider(m_StartFracRow.transform, 0.05f, 1f, 0.15f, v => { m_StartFracL.text = Ui.T($"可動範囲の {v * 100f:F0} % の中から抽選", $"sampled inside {v * 100f:F0} % of the joint range"); TouchStart(); });
         m_StartFracRow.SetActive(false);
         Ui.Label(Root.transform, Ui.T("終了 (成功) の条件", "Goal (success) condition"), 12f, Ui.Muted);
         // joints_near
@@ -209,7 +209,7 @@ public class PhaseTask : Phase
         m_StartX.text = (sb.xy != null && sb.xy.Length > 0 ? sb.xy[0] : 0f).ToString("F2"); m_StartY.text = (sb.xy != null && sb.xy.Length > 1 ? sb.xy[1] : 0f).ToString("F2");
         m_Yaw.SetValueWithoutNotify(sb.yaw_deg != null && sb.yaw_deg.Length > 0 ? sb.yaw_deg[0] : 180f); m_YawL.text = Ui.T($"向き {m_Yaw.value:F0}°", $"yaw {m_Yaw.value:F0}°");
         m_StartJoints.Set(m_Spec.start.joints == "random" ? 1 : 0); m_StartFracRow.SetActive(m_Spec.start.joints == "random");
-        m_StartFrac.SetValueWithoutNotify(m_Spec.start.joints_fraction > 0f ? m_Spec.start.joints_fraction : 0.5f); m_StartFracL.text = Ui.T($"可動範囲の {m_StartFrac.value * 100f:F0} % の中から抽選", $"sampled inside {m_StartFrac.value * 100f:F0} % of the joint range");
+        m_StartFrac.SetValueWithoutNotify(m_Spec.start.joints_fraction > 0f ? m_Spec.start.joints_fraction : 0.15f); m_StartFracL.text = Ui.T($"可動範囲の {m_StartFrac.value * 100f:F0} % の中から抽選", $"sampled inside {m_StartFrac.value * 100f:F0} % of the joint range");
         DrawGoal();
         RefreshDetails();
         W.Status(Ui.T("成功の条件と制限時間を決めて「次へ」", "Set the success condition and the time limit, then Next"));

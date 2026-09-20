@@ -1,92 +1,104 @@
 # UniRoboLab
 English | [日本語](README-ja.md)
 
-UniRoboLab is a GUI-first toolchain for training a robot policy in Unity and
-getting it onto a ROS 2 robot: **train → generate a ROS 2 package → sim2sim
-check → deploy**.
+UniRoboLab is a GUI-first toolchain for training a robot policy in a Unity simulator and
+getting it onto a ROS 2 robot. One window walks through six steps:
 
-It is not another massively-parallel physics simulator. Isaac Lab, mjlab and
-Genesis already do that well. UniRoboLab focuses on the part those tools
-leave to the user: turning a trained policy into a ROS 2 node whose
-observation/action wiring is guaranteed to match the environment it was
-trained in, and proving it in simulation before touching hardware.
+**① robot** (load a URDF) → **② task** (define start and goal conditions in 3D) → **③ train**
+(PPO against the simulator's learning server, no ROS 2 needed) → **④ try** (run the policy live
+in 3D) → **⑤ check** (run it through ROS 2 as the real robot would, judge PASS/FAIL, test the
+e-stop) → **⑥ deploy** (a generated ROS 2 package plus a plain-language deployment guide).
 
-## What you get
+It is not another massively-parallel physics simulator; Isaac Lab, mjlab and Genesis already do
+that well. UniRoboLab focuses on what those tools leave to the user: turning a policy into a ROS 2
+node whose observation/action wiring is guaranteed to match the environment it was trained in,
+and proving it in simulation before touching hardware. The single source of truth is the
+*policy contract* (`contract/`), from which both the training environment and the generated
+node are built.
 
-- A single Unity binary that hosts the GUI, the simulator and sim2sim checks
-  (ONNX inference runs inside Unity via Inference Engine; no Python needed).
-- A training backend that is bundled with the binary and unpacked on first
-  use. NVIDIA is not required; the torch wheel is chosen per GPU.
-- A generated ROS 2 package (C++ node + ONNX Runtime) whose joint order,
-  units, scaling and control rate come from one *policy contract* shared
-  with the training environment.
+## Getting it
 
-## Install (Python side)
+- **Releases** (Linux x86_64, Windows x64): a zip with the player, the Python package and the
+  tutorial. See the README inside the zip ([release/README.md](release/README.md)) for setup.
+- **Build it yourself**: below.
+
+## Build from source
+
+Requirements:
+
+- Unity **6000.3.21f1** (Unity Hub) with *Linux Build Support (Mono)* and, for the Windows player,
+  *Windows Build Support (Mono)*. Building for Windows from a Linux host works.
+- Network access on the first build: the simulator core and the other Unity packages are UPM git
+  dependencies pinned by commit in `unity/UniRoboLab/Packages/manifest.json`
+  ([Unity_ROS2_Robot_Simulator](https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator)
+  `Packages/SimulationCore` and friends, the `hijimasa` forks of ROS-TCP-Connector, URDF-Importer
+  and UnitySensors).
+- Python 3.10+ is not required to build, only to run (`scripts/setup_python.sh`).
 
 ```bash
-scripts/setup_python.sh              # uv venv at .venv with the runtime extras (gen, import, live)
-scripts/setup_python.sh --training   # + stable-baselines3 and CPU torch for `unirobolab train`
+git clone https://github.com/hijimasa/unirobolab.git && cd unirobolab
+scripts/build_player.sh                                        # -> generated/player/UniRoboLab.x86_64
+scripts/build_player.sh generated/player_win/UniRoboLab.exe windows   # Windows player (optional)
+scripts/setup_python.sh --training                             # .venv with the training backend
+scripts/unirobolab_gui.sh ~/unirobolab_projects/first          # run the GUI
 ```
 
-The script installs uv if needed and prints the interpreter path for the simulator's
-`unirobolab.policy_runner_command`. Training and sim2sim against the simulator use the
-container from `scripts/sim2sim_container.sh` (ROS 2 Jazzy). Linux only so far.
+`build_player.sh` finds the editor under `~/Unity/Hub/Editor/6000.*`; set `UNITY` to override. The
+scene is generated at build time (`Assets/UniRoboLab/Editor/LabSceneBuilder.cs`), so there is
+nothing to open in the editor for a normal build. The build log is `generated/log/build_player.log`.
 
-## Quick start (servo demo, wiring-check policy)
+Release zips (player + `python/` + `scripts/` + `contract/` + tutorial, in the layout the player
+expects at run time): `scripts/make_release.sh` after building both players.
 
-```bash
-cd python && uv venv .venv && uv pip install -e ".[dev]" && cd ..
-python/.venv/bin/unirobolab make-test-policy contract/examples/servo_demo.json
-python/.venv/bin/unirobolab gen contract/examples/servo_demo.json --out generated --overwrite
-scripts/sim2sim_container.sh start          # ROS 2 Jazzy + simulator container (needs ../Unity_ROS2_sample)
-scripts/sim2sim_container.sh build          # derived image: + onnxruntime, torch-cpu, stable-baselines3
-```
+Step ⑤ needs ROS 2. Without it on the host, `scripts/sim2sim_container.sh start` runs a ROS 2 Jazzy
+container built from [Unity_ROS2_sample](https://github.com/hijimasa/Unity_ROS2_sample) (clone it
+next to this repository, build its image, then `scripts/sim2sim_container.sh build` once for the
+derived image with the Python extras).
 
-Inside the container (`scripts/sim2sim_container.sh shell`): see
-[docs/architecture.md](docs/architecture.md) §7 for the bring-up, build and
-`unirobolab sim2sim` commands. The run ends with a PASS/FAIL table and
-`generated/sim2sim_out/report.json`. Training (`unirobolab train`) is in §8.
+Tests: `PYTHONPATH=python/src pytest python/tests` (no simulator needed).
+
+## Tutorial
+
+URDF to a deployable ROS 2 package through the GUI, with screenshots:
+[docs/tutorial.md](docs/tutorial.md) (Japanese). It covers a servo (joint targets), an arm
+pushing an object, and the settings for start-pose and physics randomization.
+
+## Command line
+
+Everything the GUI does is a `unirobolab` subcommand (`.venv/bin/unirobolab --help`): `robot-info`,
+`task-preset`, `task-gen`, `train`, `train-status`, `live`, `eval`, `scenario-default`, `gen`,
+`sim2sim`, `explain-report`, `deploy-guide`, `import-isaaclab` (build a contract from an Isaac Lab
+run's `env.yaml`), `make-test-policy`.
 
 ## Status
 
-M1 done, M2 first slice done: a policy trained with PPO inside the simulator is exported
-to ONNX, packaged for ROS 2 and passes sim2sim on the servo demo (ideal joint error under
-1 centiradian). Training does not go through ROS 2: the simulator's learning server (its
-`learning-server` branch) steps K robots in one scene per round trip, 1,850 env steps per
-second on the servo demo with 16 robots (400k PPO steps in under 4 minutes, settled error
-0.006 rad, sim2sim PASS). ROS 2 stays the deployment and sim2sim path, both
-as direct joint-command topics and through ros2_control (the generator also emits the
-controller configuration). Base-state observations (velocity, gravity, goal in the body frame) work the same
-way: a differential-drive robot trained to reach goals in 16-robot batches passes
-sim2sim over ROS 2 with its pose coming from the ground-truth topic. Training stops early once a rolling success criterion holds (the diffbot run went
-from 43 minutes to under 3), robots are spawned through the learning server so no ROS
-graph is needed during training, and several simulator processes can be pooled (about 2x
-on this machine: one process already fills most cores). See
-[docs/unity6-gpu-physics-survey.md](docs/unity6-gpu-physics-survey.md) for why GPU
-physics is not an option inside Unity 6. Policies trained elsewhere can be imported: `unirobolab import-isaaclab` builds a contract
-from an Isaac Lab run's `env.yaml` (per-element scale/offset, Twist commands, IMU and
-odometry inputs, cmd_vel outputs are all in the contract now), and sim2sim scenarios can
-inject disturbances and random goals. A first GUI piece exists: the simulator's Policy panel runs a contract + ONNX pair on a
-spawned robot without ROS (it launches `unirobolab live`, which talks to the learning
-server). A tabbed UniRoboLab panel adds a contract editor with validation, training start/stop with a live
-learning curve, and a sim2sim report viewer. Visual polish is still to come. See [docs/architecture.md](docs/architecture.md) (Japanese) for
-the design, milestones and results.
+Verified end to end on this machine (see [docs/architecture.md](docs/architecture.md), Japanese):
+
+- joint-target policies (servo demo) and a differential-drive goal-reaching policy through ①〜⑥,
+  including ros2_control deployment;
+- link-target (end-effector) and object-pushing tasks on a planar arm: training with relative
+  actions, domain randomization of start pose and physics, history-window policies, and the ⑤ check
+  with the object pose republished the way a camera would on the real robot;
+- training throughput around 1,800 env steps/s for 16 servos and 280 env steps/s for 8 arms with
+  objects, on the CPU.
+
+Known limits: one goal condition per task; no grasping (pushing only); ⑤ is Linux-only; the Windows
+player runs its helpers through Git for Windows' `bash.exe` and has not been exercised on real
+hardware yet; evaluation of a trained policy varies by about ±10 % over 40 episodes.
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
-| `unity/UniRoboLab/` | Unity project (GUI, simulator, sim2sim). Simulator core is pulled from [Unity_ROS2_Robot_Simulator](https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator) as UPM git packages |
-| `contract/` | Policy contract schema: the single source of truth for observations, actions and rates |
-| `python/` | Python package `unirobolab`: `gen` (ROS 2 package generator), `make-test-policy`, `sim2sim` evaluator, `train` (placeholder) |
-| `scripts/` | Container and simulator bring-up helpers for sim2sim |
-| `docs/` | Design notes |
+| `unity/UniRoboLab/` | Unity project: the wizard GUI (`Assets/UniRoboLab/Scripts`), scene builder and player build (`Assets/UniRoboLab/Editor`). The simulator core comes from Unity_ROS2_Robot_Simulator as UPM git packages |
+| `contract/` | Policy contract schema and examples: observations, actions, rates, safety limits, ROS topics |
+| `python/` | Package `unirobolab`: task spec → contract + training config, PPO trainer, live runner, ROS 2 package generator, sim2sim evaluator, deployment guide |
+| `scripts/` | Player build, GUI launcher, Python setup (bash / PowerShell), ROS 2 container, ⑤ runner, release assembly |
+| `release/` | README files shipped inside the release zips |
+| `docker/` | Derived image for the ROS 2 container (onnxruntime, torch-cpu, stable-baselines3) |
+| `docs/` | Design notes and results (`architecture.md`), UX flow (`ux-flow.md`), tutorial and screenshots |
 
 ## License
 
 Apache-2.0. UniRoboLab is an independent project and is not affiliated with
 or endorsed by Unity Technologies.
-
-## Tutorial
-
-URDF to a deployable ROS 2 package through the GUI, with screenshots: [docs/tutorial.md](docs/tutorial.md) (Japanese)

@@ -20,13 +20,15 @@ public static class Env
         string start = Path.GetDirectoryName(Application.dataPath) ?? ".";
         RepoRoot = FindRepo(start) ?? FindRepo(Directory.GetCurrentDirectory()) ?? "";
         string cfg = UniRoboLabConfig.Data.python;
-        string venv = string.IsNullOrEmpty(RepoRoot) ? "" : Path.Combine(RepoRoot, ".venv", "bin", "python");
+        string venv = string.IsNullOrEmpty(RepoRoot) ? "" : (IsWindows ? Path.Combine(RepoRoot, ".venv", "Scripts", "python.exe") : Path.Combine(RepoRoot, ".venv", "bin", "python"));
         Python = !string.IsNullOrEmpty(cfg) && cfg != "python3" ? cfg : (File.Exists(venv) ? venv : (string.IsNullOrEmpty(cfg) ? "python3" : cfg));
         if (string.IsNullOrEmpty(UniRoboLabConfig.Data.policy_runner_env) && !string.IsNullOrEmpty(RepoRoot))
             UniRoboLabConfig.Data.policy_runner_env = "PYTHONPATH=" + Path.Combine(RepoRoot, "python", "src");
         UniRoboLabConfig.Data.python = Python;
         Debug.Log($"[Env] repo={RepoRoot} python={Python}");
     }
+
+    public static bool IsWindows => Application.platform == RuntimePlatform.WindowsPlayer || Application.platform == RuntimePlatform.WindowsEditor;
 
     static string FindRepo(string from)
     {

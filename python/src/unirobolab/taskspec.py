@@ -83,7 +83,7 @@ def validate(spec: dict[str, Any]) -> list[str]:
     sj = spec.get("start", {}).get("joints", "zero")
     if sj not in ("zero", "random"):
         problems.append(f"start.joints は zero か random (got {sj!r})")
-    fr = spec.get("start", {}).get("joints_fraction", 0.5)
+    fr = spec.get("start", {}).get("joints_fraction", 0.15)
     if not isinstance(fr, (int, float)) or not 0.0 < float(fr) <= 1.0:
         problems.append("start.joints_fraction は 0 より大きく 1 以下")
     rz = spec.get("training", {}).get("randomize") or {}
@@ -176,6 +176,18 @@ def estimate_time_s(spec: dict[str, Any], env_steps_per_s: float = 1500.0) -> tu
         tol = float(c.get("tolerance", 0.05))
         steps = 130000 * (0.05 / max(tol, 1e-3)) ** 1.3
         why = f"関節目標、許容 {tol:g} rad、{n_envs} 体並列"
+    if c.get("type") == "object_in_region":
+        env_steps_per_s = min(env_steps_per_s, 300.0)   # 物体 (別エンティティ) の分だけ 1 往復が重い (実測 280〜300)
+    tr = spec.get("training", {})
+    extra = []
+    if spec.get("start", {}).get("joints", "zero") == "random":
+        steps *= 1.5; extra.append("開始姿勢のばらつき")
+    if any(isinstance(v, list) and len(v) == 2 for v in (tr.get("randomize") or {}).values()):
+        steps *= 1.5; extra.append("物理のばらつき")
+    if int(tr.get("history_length", 1)) > 1:
+        steps *= 1.2; extra.append("履歴窓")
+    if extra:
+        why += "、" + "・".join(extra) + "で長め"
     rate = env_steps_per_s * (n_envs / 8.0) ** 0.7
     return steps / rate, why
 
@@ -203,7 +215,7 @@ def generate(spec: dict[str, Any], spec_dir: str = ".") -> tuple[dict[str, Any],
     task["episode_steps"] = max(1, int(round(float(ep.get("time_s", 2.0)) * rate)))
     # 開始姿勢のばらつき (domain randomization、状態側): 各エピソードの関節を可動範囲の fraction 倍の中から抽選
     if spec.get("start", {}).get("joints", "zero") == "random" and task.get("type") != "base_target":
-        task["start_joints"] = {"mode": "random", "fraction": float(spec.get("start", {}).get("joints_fraction", 0.5))}
+        task["start_joints"] = {"mode": "random", "fraction": float(spec.get("start", {}).get("joints_fraction", 0.15))}
     tr = spec.get("training", {})
     # 物理のばらつき (domain randomization、動力学側) と、履歴窓 (方策が直近の観測・行動から状況を推定できる)
     if tr.get("randomize"):

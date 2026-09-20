@@ -121,7 +121,15 @@ public class PhaseTrain : Phase
                 if (code == 0 && File.Exists(Path.Combine(m_RunDir, "policy.onnx")))
                 {
                     P.D.run_dir = P.Rel(m_RunDir); P.Stamp("run"); P.Save(); m_Finished = true;
-                    W.Status(Ui.T("学習が終わりました。④ で試すか、⑤ でチェックへ", "Training finished. Try it in step 4 or check it in step 5"), Ui.Accent);
+                    // 目標の成功率に届いたかで文言を変える (届かなくても方策は出ている: ④ で試せる)
+                    float rate = -1f; string sj = Path.Combine(m_RunDir, "status.json");
+                    if (File.Exists(sj)) rate = Ui.Num(File.ReadAllText(sj), "success_rate", -1f);
+                    float target = TaskSpec.Load(P.Abs(P.D.task)).training.success_target;
+                    if (rate >= 0f && target > 0f && rate < target)
+                        W.Status(Ui.T($"学習は終わりましたが成功率 {rate * 100f:F0} % で目標 {target * 100f:F0} % に届いていません。④ で様子を見られます。上げるには ② で許容誤差を広げる、制限時間を延ばす、開始姿勢の幅を狭める、または学習をもう一度",
+                                      $"Training finished at {rate * 100f:F0} % success, below the {target * 100f:F0} % target. You can still try it in step 4; to improve, widen the tolerance, extend the time, narrow the start pose spread in step 2, or train again"), Ui.Warn);
+                    else
+                        W.Status(Ui.T("学習が終わりました。④ で試すか、⑤ でチェックへ", "Training finished. Try it in step 4 or check it in step 5"), Ui.Accent);
                     W.RefreshStepper(); W.TriggerDoneShots();
                 }
                 else W.Status(Ui.T($"学習が異常終了しました (exit {code})。「詳細」のログを見てください", $"training failed (exit {code}); see the log under Details"), Ui.Bad);
