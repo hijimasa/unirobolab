@@ -19,6 +19,24 @@ def _floats(s: str | None, n: int) -> list[float]:
     return (v + [0.0] * n)[:n]
 
 
+def reach_radius(tree: dict[str, Any]) -> float:
+    """根リンクから届きうる最大距離の上限 [m]。各リンクへの経路の並進の長さを足し、先端の張り出しを加える。
+    姿勢によらない上限なので、並列学習で隣のロボットと重ならない間隔を決めるのに使う。"""
+    joints = tree["joints"]
+    best = 0.0
+    for link in tree["links"]:
+        d, cur, guard = 0.0, link, 0
+        while cur in joints and guard < 64:
+            j = joints[cur]
+            d += float(np.linalg.norm(np.asarray(j["xyz"], float)))
+            cur = j["parent"]; guard += 1
+        tip = tree["tips"].get(link)
+        if tip:
+            d += float(np.linalg.norm(np.asarray(tip, float)))
+        best = max(best, d)
+    return best
+
+
 def load_tree(urdf_path: str) -> dict[str, Any]:
     """{"root": link, "joints": {child_link: joint dict}, "links": [names], "tips": {link: xyz}}"""
     root = ET.parse(urdf_path).getroot()

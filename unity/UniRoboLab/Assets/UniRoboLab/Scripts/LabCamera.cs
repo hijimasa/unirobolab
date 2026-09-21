@@ -25,6 +25,23 @@ public class LabCamera : MonoBehaviour
         Apply();
     }
 
+    /// <summary>視点の向きを決める (フェーズに入った直後だけ。以後は利用者の右ドラッグを邪魔しない)。</summary>
+    public void SetAngle(float yaw, float pitch)
+    {
+        m_Yaw = yaw; m_Pitch = Mathf.Clamp(pitch, -89f, 89f);
+        Apply();
+    }
+
+    /// <summary>与えた範囲が画角に収まるように注視点と距離を決める。② で「ロボットと目標が同時に見える」ようにするため。</summary>
+    public void Frame(Bounds b, float minDistance = 0.8f)
+    {
+        target = b.center;
+        float radius = Mathf.Max(b.extents.magnitude, 0.05f);
+        float fov = Camera.main != null ? Camera.main.fieldOfView : 60f;
+        // 縦の画角に収める距離 + 少し余裕。横長の配置でも端が切れないよう 1.25 倍する
+        distance = Mathf.Max(minDistance, radius * 1.25f / Mathf.Tan(0.5f * fov * Mathf.Deg2Rad));
+    }
+
     void Update()
     {
         if (Input.GetMouseButton(1))

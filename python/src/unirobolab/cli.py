@@ -468,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--instances", type=int, default=1,
                    help="direct: simulator processes on ports port..port+K-1, each with --n-envs robots")
     s.add_argument("--spawn-urdf", help="direct: spawn missing entities from this URDF (path as seen by the simulator)")
-    s.add_argument("--spawn-spacing", type=float, default=1.0, help="metres between spawned robots (along y)")
+    s.add_argument("--spawn-spacing", type=float, help="metres between spawned robots (default: from the training config, which task-gen sizes to the task)")
     s.add_argument("--spawn-yaw", type=float, default=0.0)
     s.add_argument("--spawn-layout", choices=["line", "grid"], default="line", help="how --n-envs robots are placed (grid = ceil(sqrt(n)) columns)")
     s.add_argument("--spawn-origin", type=float, nargs=2, default=[0.0, 0.0], metavar=("X", "Y"), help="ROS x y of the first robot [m]")

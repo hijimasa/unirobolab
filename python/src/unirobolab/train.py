@@ -127,7 +127,7 @@ class _EpisodeLogger:
             return
         from unirobolab.status import train_status
         ctx = self.status_ctx
-        st = train_status(self.rows, ctx.get("total_timesteps", 0), ctx.get("n_envs", 1), wall_s,
+        st = train_status(self.rows, ctx.get("total_timesteps", 0), ctx.get("n_envs", 1), wall_s, ctx.get("unit", ""),
                           tolerance=ctx.get("tolerance"), window=ctx.get("window", 200),
                           early_stop=ctx.get("early_stop"), phase=phase)
         if ctx.get("extra"):
@@ -309,7 +309,7 @@ def evaluate(model, env, episodes: int) -> dict:
 def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unity",
         transport: str = "direct", host: str = "127.0.0.1", port: int = 10100,
         n_envs: int = 1, entities: list[str] | None = None, instances: int = 1,
-        spawn_urdf: str | None = None, spawn_spacing: float = 1.0, spawn_yaw: float = 0.0,
+        spawn_urdf: str | None = None, spawn_spacing: float | None = None, spawn_yaw: float = 0.0,
         spawn_layout: str = "line", spawn_origin: tuple[float, float] = (0.0, 0.0)) -> int:
     from unirobolab import contract as contract_mod
     c = contract_mod.load(contract_path)
@@ -323,6 +323,10 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
         print(f"backend {backend!r} not implemented"); return 2
     from stable_baselines3 import PPO
 
+    if spawn_spacing is None:
+        # 学習設定の spawn_spacing (task-gen がタスクから計算: 届く範囲・移動範囲・物体の置き場所)。
+        # 固定値だと隣のロボットと干渉して学習が互いに壊れる
+        spawn_spacing = float(task.get("spawn_spacing", 1.0))
     if transport == "direct":
         from unirobolab.direct.vec_env import DirectVecEnv
         ns = c.ros.namespace if c.ros else "robot"
@@ -343,6 +347,7 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
         env = UnityContractEnv(c, task)
         weights = env.reward_weights
         n_envs = 1
+    print(f"spawn: {spawn_layout}, {spawn_spacing:g} m apart (from the task: reach, travel and object placement)", flush=True)
     print(f"env ({transport}, {n_envs} envs): obs {env.observation_space.shape} act {env.action_space.shape}, "
           f"{task.get('physics_steps_per_action', 1)} physics steps/action, "
           f"{task.get('episode_steps', 100)} steps/episode, reward {weights}", flush=True)
@@ -359,6 +364,7 @@ def run(contract_path: str, config_path: str, out_dir: str, backend: str = "unit
                             status_path=os.path.join(out_dir, "status.json"),
                             status_ctx={"total_timesteps": int(train["total_timesteps"]), "n_envs": n_envs,
                                         "tolerance": tolerance, "window": int(es.get("window", 200)) if es else 200,
+                                        "unit": "rad" if task.get("type", "joint_target") == "joint_target" else "m",
                                         "early_stop": es or None})
     callbacks = [logger.callback]
 

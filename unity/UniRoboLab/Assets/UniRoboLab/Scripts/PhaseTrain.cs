@@ -81,7 +81,7 @@ public class PhaseTrain : Phase
         cmd.Append(W.Py).Append(" -u -m unirobolab train ").Append(ExternalProcess.Quote(P.Abs(P.D.contract)))
            .Append(" --config ").Append(ExternalProcess.Quote(P.Abs(P.D.train))).Append(" --out ").Append(ExternalProcess.Quote(m_RunDir))
            .Append(" --transport direct --port ").Append(Env.LearningPort()).Append(" --n-envs ").Append(Mathf.Max(1, spec.training.n_envs))
-           .Append(" --spawn-urdf ").Append(ExternalProcess.Quote(P.Abs(P.D.urdf))).Append(" --spawn-spacing 0.6 --spawn-layout grid --spawn-yaw ").Append(W.StartYawRad.ToString("F5"))
+           .Append(" --spawn-urdf ").Append(ExternalProcess.Quote(P.Abs(P.D.urdf))).Append(" --spawn-layout grid --spawn-yaw ").Append(W.StartYawRad.ToString("F5"))
            .Append(" --spawn-origin ").Append(W.StartX.ToString("F3")).Append(' ').Append(W.StartY.ToString("F3")).Append(" 2>&1");
         Directory.CreateDirectory(m_RunDir);
         try { m_LogFile?.Dispose(); m_LogFile = new StreamWriter(Path.Combine(m_RunDir, "train.log"), false) { AutoFlush = true }; m_LogFile.WriteLine("$ " + cmd); } catch (Exception) { m_LogFile = null; }
@@ -91,12 +91,15 @@ public class PhaseTrain : Phase
         m_Start.interactable = false;
         W.Status(Ui.T("学習中", "training"));
         var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
-        // 学習器は 0.6 m 間隔の格子 (ceil(sqrt(n)) 列; ROS x = Unity z, ROS y = Unity -x) に並べる。格子の中央を狙う
+        // 学習器は格子 (ceil(sqrt(n)) 列; ROS x = Unity z, ROS y = Unity -x) に並べる。間隔は学習設定の
+        // spawn_spacing (タスクから決まる: 届く範囲・移動範囲・物体の置き場所) なのでそれに合わせて引く
         if (cam != null)
         {
+            float gap = SpawnSpacing();
             int n = Mathf.Max(1, spec.training.n_envs); int cols = Mathf.CeilToInt(Mathf.Sqrt(n)); int rows = Mathf.CeilToInt(n / (float)cols);
-            cam.target = new Vector3(-W.StartY - 0.6f * (cols - 1) * 0.5f, 0.15f, W.StartX + 0.6f * (rows - 1) * 0.5f);
-            cam.distance = 1.2f + 0.7f * Mathf.Max(cols, rows);
+            var grid = new Bounds(new Vector3(-W.StartY - gap * (cols - 1) * 0.5f, 0.15f, W.StartX + gap * (rows - 1) * 0.5f),
+                                  new Vector3(gap * cols, 0.4f, gap * rows));
+            cam.SetAngle(35f, 32f); cam.Frame(grid, 2f);
         }
     }
 
@@ -126,8 +129,13 @@ public class PhaseTrain : Phase
                     if (File.Exists(sj)) rate = Ui.Num(File.ReadAllText(sj), "success_rate", -1f);
                     float target = TaskSpec.Load(P.Abs(P.D.task)).training.success_target;
                     if (rate >= 0f && target > 0f && rate < target)
-                        W.Status(Ui.T($"学習は終わりましたが成功率 {rate * 100f:F0} % で目標 {target * 100f:F0} % に届いていません。④ で様子を見られます。上げるには ② で許容誤差を広げる、制限時間を延ばす、開始姿勢の幅を狭める、または学習をもう一度",
-                                      $"Training finished at {rate * 100f:F0} % success, below the {target * 100f:F0} % target. You can still try it in step 4; to improve, widen the tolerance, extend the time, narrow the start pose spread in step 2, or train again"), Ui.Warn);
+                    {
+                        // 状態行は 1 行しか出ないので、結論だけを置き、対策は折り返す注意欄に書く
+                        W.Status(Ui.T($"学習は終わりましたが成功率 {rate * 100f:F0} % (目標 {target * 100f:F0} %) です",
+                                      $"Training finished at {rate * 100f:F0} % success (target {target * 100f:F0} %)"), Ui.Warn);
+                        m_Hint.text = Ui.T($"この方策は 10 回に {Mathf.RoundToInt(rate * 10f)} 回ほどしか成功しません。④ で様子を見るのは構いませんが、実機へ持っていく前に ⑤ の合格が要ります。\n上げるには ② で許容誤差を広げる、1 回の制限時間を延ばす、開始姿勢の幅を狭める、または同じ設定で学習をもう一度 (乱数で結果が変わります)。",
+                                            $"This policy succeeds in roughly {Mathf.RoundToInt(rate * 10f)} attempts out of 10. Trying it in step 4 is fine, but step 5 must pass before the real robot.\nTo improve: widen the tolerance, extend the time per attempt, narrow the start pose spread in step 2, or train again with the same settings (the random seed changes the outcome).");
+                    }
                     else
                         W.Status(Ui.T("学習が終わりました。④ で試すか、⑤ でチェックへ", "Training finished. Try it in step 4 or check it in step 5"), Ui.Accent);
                     W.RefreshStepper(); W.TriggerDoneShots();
@@ -173,6 +181,15 @@ public class PhaseTrain : Phase
         m_StatusProc = W.Launch($"{W.Py} -m unirobolab train-status {ExternalProcess.Quote(path)} --lang {(Ui.Japanese ? "ja" : "en")} 2>&1");
     }
 
+    /// <summary>学習設定の spawn_spacing [m] (task-gen がタスクから決める)。読めなければ 1 m。</summary>
+    float SpawnSpacing()
+    {
+        string t = P.Abs(P.D.train);
+        if (!File.Exists(t)) return 1f;
+        try { return Mathf.Max(0.2f, Ui.Num(File.ReadAllText(t), "spawn_spacing", 1f)); }
+        catch (IOException) { return 1f; }
+    }
+
     void RedrawCurve()
     {
         string path = Path.Combine(m_RunDir ?? "", "progress.csv");
@@ -216,9 +233,11 @@ public class PhaseTrain : Phase
                 for (int t = 0; t < thick; t++) if (y - t >= 0) px[(y - t) * w + x] = c;
             }
         }
-        // 縦軸: 誤差 0 〜 eHi。目標付近が見えるように上限は目標の 5 倍まで (それより大きい初期の誤差は上端に張り付く)
-        float eMax = 0f; foreach (float e in err) eMax = Mathf.Max(eMax, e);
-        float eHi = Mathf.Clamp(eMax, tol * 3f, tol * 5f);
+        // 縦軸: 誤差 0 〜 eHi。最初の大きな誤差で目標付近が潰れないよう、直近半分の最大値で決める。
+        // 上限を目標の数倍で固定すると、まだ誤差が大きい学習 (地点到達など) で点が上端に張り付いて何も読めない。
+        float recentMax = 0f;
+        for (int i = err.Count / 2; i < err.Count; i++) recentMax = Mathf.Max(recentMax, err[i]);
+        float eHi = Mathf.Max(tol * 3f, recentMax * 1.05f);
         for (int gy = 1; gy < 4; gy++) { int y = gy * h / 4; for (int x = 0; x < w; x += 3) px[y * w + x] = new Color32(50, 50, 58, 255); }   // 薄い横罫線
         int yTol = Mathf.Clamp((int)(tol / eHi * (h - 1)), 0, h - 1);
         for (int x = 0; x < w; x++) { px[yTol * w + x] = new Color32(255, 170, 60, 255); if (yTol + 1 < h) px[(yTol + 1) * w + x] = new Color32(255, 170, 60, 255); }

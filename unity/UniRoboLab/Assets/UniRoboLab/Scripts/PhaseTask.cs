@@ -25,7 +25,7 @@ public class PhaseTask : Phase
     LineRenderer m_BoxLine;
     GameObject m_PointMarker;
     readonly Dictionary<string, float[]> m_LinkTips = new Dictionary<string, float[]>();
-    TMP_Text m_Kind, m_RangeL, m_TolL, m_TimeL, m_RMinL, m_RMaxL, m_Estimate, m_TrainText;
+    TMP_Text m_Kind, m_KindL, m_RangeL, m_TolL, m_TimeL, m_RMinL, m_RMaxL, m_Estimate, m_TrainText, m_Pending;
     Slider m_Range, m_Tol, m_Time, m_RMin, m_RMax, m_Yaw;
     TMP_InputField m_StartX, m_StartY; TMP_Text m_YawL;
     Ui.Choice m_StartJoints; Slider m_StartFrac; TMP_Text m_StartFracL; GameObject m_StartFracRow;   // 開始姿勢: ゼロ / ばらつかせる
@@ -43,7 +43,7 @@ public class PhaseTask : Phase
         Root = Ui.Column(main, "Task", 6f);
         m_Kind = Ui.Label(Root.transform, "", 13f, Ui.Header);
         var kr = Ui.Row(Root.transform, 26f);
-        Ui.Label(kr.transform, Ui.T("何をさせるか", "Task kind"), 12f, Ui.Muted, false, 0f, 110f);
+        m_KindL = Ui.Label(kr.transform, Ui.T("何をさせるか", "Task kind"), 12f, Ui.Muted, false, 0f, 110f);
         m_KindChoice = new Ui.Choice(kr.transform, new[] { Ui.T("関節を目標角へ", "joints to target angles"), Ui.T("手先を所定の場所へ", "a link to a target region"), Ui.T("物体を所定の場所へ", "an object to a target region") }, 0, 24f);
         m_KindChoice.OnChange = i => { if (m_Spec != null && !m_IsBase) SetKind(i); };
         Ui.Label(Root.transform, Ui.T("開始の位置と向き (ロボットはここからスタート。学習・チェックでも同じ)", "Start pose (used for training and the check as well)"), 12f, Ui.Muted);
@@ -106,7 +106,8 @@ public class PhaseTask : Phase
         Ui.Label(ogl.transform, Ui.T("目標領域 中心 x, y / 大きさ [m]", "Goal region center x, y / size [m]"), 12f, Ui.Text, false, 0f, 110f);
         m_OGx = Ui.Input(ogl.transform, "x", 24f); m_OGy = Ui.Input(ogl.transform, "y", 24f); m_OGsx = Ui.Input(ogl.transform, "w", 24f); m_OGsy = Ui.Input(ogl.transform, "d", 24f);
         foreach (var f in new[] { m_OSx, m_OSy, m_OSz, m_OMass, m_OStartX, m_OStartY, m_OVarX, m_OVarY, m_OGx, m_OGy, m_OGsx, m_OGsy }) f.onEndEdit.AddListener(_ => Touch());
-        Ui.Label(m_ObjectBox.transform, Ui.T("物体 (橙) は開始の枠 (橙) の中に置かれ、緑の枠へ押し込めば成功。手先の姿勢や関節角は問いません。枠は根リンク座標系で、地面の上にあります", "The object (orange) starts inside the orange frame; pushing it into the green frame is success. Hand pose and joint angles do not matter. Frames are in the root-link frame, on the ground"), 11f, Ui.Muted, true, 44f);
+        Ui.Label(m_ObjectBox.transform, Ui.T("物体 (橙) を緑の枠へ押し込めば成功。手先の姿勢や関節角は問いません (座標はロボットの根リンク基準)",
+                                              "Push the object (orange) into the green frame; hand pose and joint angles do not matter (root-link frame)"), 11f, Ui.Muted, false, 22f);
         // base_in_region
         m_BaseBox = Ui.Column(Root.transform, "Base", 4f, 0, false);
         m_RMinL = Ui.Label(m_BaseBox.transform, "", 12f, Ui.Text);
@@ -120,14 +121,15 @@ public class PhaseTask : Phase
         m_Time = Ui.Slider(Root.transform, 0.5f, 30f, 2f, v => { m_TimeL.text = Ui.T($"1 回の制限時間: {v:F1} 秒", $"time per attempt: {v:F1} s"); Touch(); });
         var rz = Ui.Row(Root.transform, 26f);
         Ui.Label(rz.transform, Ui.T("物理のばらつき", "Physics randomization"), 12f, Ui.Text, false, 0f, 110f);
-        m_Randomize = new Ui.Choice(rz.transform, new[] { Ui.T("なし", "off"), Ui.T("あり (質量 ×0.5〜2、摩擦 0.2〜1.0、駆動 ×0.7〜1.3)", "on (mass x0.5-2, friction 0.2-1.0, drive x0.7-1.3)") }, 0, 24f);
+        m_Randomize = new Ui.Choice(rz.transform, new[] { Ui.T("なし", "off"), Ui.T("あり (質量・摩擦・駆動)", "on (mass, friction, drive)") }, 0, 24f);
         m_Randomize.OnChange = _ => Touch();
         var hr = Ui.Row(Root.transform, 26f);
         Ui.Label(hr.transform, Ui.T("方策の履歴窓", "Policy history window"), 12f, Ui.Text, false, 0f, 110f);
         m_History = new Ui.Choice(hr.transform, new[] { Ui.T("今の観測だけ", "current observation only"), Ui.T("直近 8 回 (状況を推定できる)", "last 8 frames (infers the situation)") }, 0, 24f);
         m_History.OnChange = _ => Touch();
-        Ui.Label(Root.transform, Ui.T("実機とのずれ (物体の重さ・滑りやすさ、モータの応答) に強くするなら両方を入れます。学習は少し長くなります", "Turn both on for robustness to sim-to-real gaps (object mass and friction, motor response); training takes a little longer"), 11f, Ui.Muted, true, 30f);
+        Ui.Label(Root.transform, Ui.T("実機とのずれ (物体の重さ・滑りやすさ、モータの応答) に強くするなら両方を入れます。質量 ×0.5〜2、摩擦 0.2〜1.0、駆動 ×0.7〜1.3 で毎回変わります。学習は少し長くなります", "Turn both on for robustness to sim-to-real gaps: mass x0.5-2, friction 0.2-1.0 and drive gain x0.7-1.3 change every attempt. Training takes a little longer"), 11f, Ui.Muted, true, 30f);
         m_Estimate = Ui.Label(Root.transform, "", 12f, Ui.Accent, true, 40f);
+        m_Pending = Ui.Label(Root.transform, "", 12f, Ui.Warn, true, 34f);
         Ui.Label(Root.transform, Ui.T("「次へ」で契約と学習設定を生成します (学習はまだ始めません)。", "Next generates the contract and the training config (training does not start yet)."), 11f, Ui.Muted, true, 30f);
         Ui.Spacer(Root.transform);
 
@@ -138,6 +140,17 @@ public class PhaseTask : Phase
     }
 
     void Touch() { m_EstAt = Time.realtimeSinceStartup + 0.6f; DrawGoal(); }
+
+    /// <summary>ここで変えた値は task.json にすぐ入るが、契約と学習設定は「次へ」で作り直すまで古いままなので、それを出す。</summary>
+    void RefreshPending()
+    {
+        if (m_Pending == null) return;
+        bool pending = P.Exists("train") && P.IsStale("train");
+        m_Pending.text = pending
+            ? Ui.T("変更はまだ ③ 以降に反映されていません。「次へ」で契約と学習設定を作り直します (学習・チェックもやり直しになります)",
+                   "The change has not reached step 3 yet. Next regenerates the contract and the training config (training and the check have to be redone)")
+            : "";
+    }
 
     /// <summary>開始の位置・向きを仕様に書き、プレビューのロボットをそこへ置く。</summary>
     void TouchStart()
@@ -159,8 +172,36 @@ public class PhaseTask : Phase
         return P.Has(P.D.urdf) && P.Has(P.D.task);
     }
 
+    /// <summary>② のプレビュー用のロボット。⑤ はエンティティを消すので、戻ってきたときに居ないことがある。</summary>
+    void EnsurePreviewRobot()
+    {
+        var buf = new List<GameObject>(); W.Sim.GetEntitiesSnapshot(buf);
+        foreach (GameObject e in buf) if (e != null && !e.name.Contains("__")) return;   // "__" は物体
+        if (!P.Has(P.D.urdf) || !W.Sim.CanSpawnFromGui) return;
+        if (W.Sim.TrySpawnRobotFromUrdf(P.Abs(P.D.urdf), out string name, out _)) W.PlaceSpawned(name);
+    }
+
+    /// <summary>ロボットと目標をまとめて画角に入れる。目標だけを見ると「届く範囲か」が判断できない。</summary>
+    void FrameRobotAndGoal(Bounds goal)
+    {
+        var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
+        if (cam == null) return;
+        Bounds b = goal;
+        var buf = new List<GameObject>(); W.Sim.GetEntitiesSnapshot(buf);
+        foreach (GameObject e in buf)
+        {
+            if (e == null) continue;
+            foreach (Renderer r in e.GetComponentsInChildren<Renderer>()) b.Encapsulate(r.bounds);
+        }
+        cam.Frame(b);
+    }
+
     public override void Enter()
     {
+        EnsurePreviewRobot();
+        // 斜め上から見る。真横だと台座や板でロボットの構造 (関節の並び) が隠れて分からない
+        var cam0 = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
+        if (cam0 != null) cam0.SetAngle(35f, 30f);
         m_Spec = TaskSpec.Load(P.Abs(P.D.task));
         SpecGoal g = m_Spec.Goal0;
         m_IsBase = g.type == "base_in_region";
@@ -169,6 +210,7 @@ public class PhaseTask : Phase
         m_Kind.text = m_IsBase ? Ui.T("このロボットは移動基体: 「所定の場所へ動く」タスク", "Mobile base: a reach-a-point task")
                                : Ui.T("このロボットは固定基体", "Fixed base");
         m_KindChoice.Buttons[0].transform.parent.gameObject.SetActive(!m_IsBase);
+        if (m_KindL != null) m_KindL.gameObject.SetActive(!m_IsBase);
         LoadLinks();
         m_KindChoice.Set(m_IsObject ? 2 : (m_IsLink ? 1 : 0));
         m_JointBox.SetActive(!m_IsBase && !m_IsLink && !m_IsObject); m_LinkBox.SetActive(m_IsLink); m_ObjectBox.SetActive(m_IsObject); m_BaseBox.SetActive(m_IsBase);
@@ -202,7 +244,12 @@ public class PhaseTask : Phase
         var rzs = m_Spec.training.randomize;
         m_Randomize.Set(rzs != null && ((rzs.object_mass != null && rzs.object_mass.Length == 2) || (rzs.drive_gain != null && rzs.drive_gain.Length == 2)) ? 1 : 0);
         m_History.Set(m_Spec.training.history_length > 1 ? 1 : 0);
-        if (m_IsBase) { m_RMin.value = g.region.r_min; m_RMax.value = g.region.r_max; }
+        if (m_IsBase)
+        {
+            m_RMin.value = g.region.r_min > 0f ? g.region.r_min : m_RMin.value;
+            m_RMax.value = g.region.r_max > 0f ? g.region.r_max : m_RMax.value;
+            m_RMin.onValueChanged.Invoke(m_RMin.value); m_RMax.onValueChanged.Invoke(m_RMax.value);
+        }
         else { bool manual = g.range != null && g.range.Length == 2; m_RangeMode.Set(manual ? 1 : 0); if (manual) m_Range.value = Mathf.Max(Mathf.Abs(g.range[0]), Mathf.Abs(g.range[1])); }
         m_Tol.onValueChanged.Invoke(m_Tol.value); m_Time.onValueChanged.Invoke(m_Time.value);
         var sb = m_Spec.start.@base;
@@ -211,6 +258,7 @@ public class PhaseTask : Phase
         m_StartJoints.Set(m_Spec.start.joints == "random" ? 1 : 0); m_StartFracRow.SetActive(m_Spec.start.joints == "random");
         m_StartFrac.SetValueWithoutNotify(m_Spec.start.joints_fraction > 0f ? m_Spec.start.joints_fraction : 0.15f); m_StartFracL.text = Ui.T($"可動範囲の {m_StartFrac.value * 100f:F0} % の中から抽選", $"sampled inside {m_StartFrac.value * 100f:F0} % of the joint range");
         DrawGoal();
+        RefreshPending();
         RefreshDetails();
         W.Status(Ui.T("成功の条件と制限時間を決めて「次へ」", "Set the success condition and the time limit, then Next"));
     }
@@ -309,6 +357,7 @@ public class PhaseTask : Phase
         if (m_EstAt > 0f && Time.realtimeSinceStartup >= m_EstAt && m_Est == null && !m_Generating)
         {
             m_EstAt = -1f; Apply();
+            RefreshPending(); W.RefreshStepper();
             m_Est = W.Launch($"{W.Py} -m unirobolab task-gen {ExternalProcess.Quote(P.Abs(P.D.task))} --estimate-only 2>&1");
         }
         if (m_Est != null && m_Est.HasExited)
@@ -368,8 +417,7 @@ public class PhaseTask : Phase
         Vector3 c0 = new Vector3(-W.StartY, 0f, W.StartX);
         Ring(m_RingIn, m_RMin.value, c0); Ring(m_RingOut, m_RMax.value, c0);
         m_RingIn.enabled = m_RingOut.enabled = true;
-        var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
-        if (cam != null) { cam.target = c0; cam.distance = Mathf.Max(3f, m_RMax.value * 2.2f); }
+        FrameRobotAndGoal(new Bounds(c0, new Vector3(2f * m_RMax.value, 0.4f, 2f * m_RMax.value)));
     }
 
     static LineRenderer MakeRing(string name)
@@ -414,8 +462,7 @@ public class PhaseTask : Phase
                 }
                 lr.enabled = true;
             }
-            var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
-            if (cam != null && k > 0) { var rs = ent.GetComponentsInChildren<Renderer>(); if (rs.Length > 0) { Bounds b = rs[0].bounds; foreach (Renderer rr in rs) b.Encapsulate(rr.bounds); cam.target = b.center; cam.distance = Mathf.Max(0.8f, b.extents.magnitude * 3f); } }
+            if (k > 0) FrameRobotAndGoal(new Bounds(ent.transform.position, Vector3.one * 0.2f));
         }
         for (int i = k; i < m_Arcs.Count; i++) m_Arcs[i].enabled = false;
     }
@@ -452,8 +499,7 @@ public class PhaseTask : Phase
             m_PointMarker.transform.position = lt.TransformPoint(new Vector3(-F(m_Py, 0f), F(m_Pz, 0f), F(m_Px, 0f)));
             m_PointMarker.SetActive(true);
         }
-        var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
-        if (cam != null) { cam.target = U(c.x, c.y, c.z); cam.distance = Mathf.Max(0.8f, h.magnitude * 6f); }
+        FrameRobotAndGoal(new Bounds(U(c.x, c.y, c.z), 2f * new Vector3(h.magnitude, h.magnitude, h.magnitude)));
     }
 
     /// <summary>物体タスク: 開始の枠 (橙)、物体のプレビュー (橙、開始位置の中心)、目標の枠 (緑) を地面に描く。根リンク座標系 → Unity は DrawLinkBox と同じ。</summary>
@@ -491,8 +537,9 @@ public class PhaseTask : Phase
         m_ObjPreview.transform.localScale = m_ShapeChoice.Index == 1 ? Vector3.one * 2f * ox : (m_ShapeChoice.Index == 2 ? new Vector3(2f * ox, 0.5f * oy, 2f * ox) : new Vector3(oy, oz, ox));
         m_ObjPreview.transform.position = U(sx, sy, 0.5f * h); m_ObjPreview.transform.rotation = rot;
         m_ObjPreview.SetActive(true);
-        var cam = Camera.main != null ? Camera.main.GetComponent<LabCamera>() : null;
-        if (cam != null) { cam.target = U(0.5f * (sx + gx), 0.5f * (sy + gy), 0f); cam.distance = Mathf.Max(1.2f, 2.5f * Vector2.Distance(new Vector2(sx, sy), new Vector2(gx, gy)) + 0.8f); }
+        var span = new Bounds(U(sx, sy, 0f), Vector3.one * 0.1f);
+        span.Encapsulate(U(gx, gy, 0f)); span.Expand(2f * Mathf.Max(ghx, shx) + 0.2f);
+        FrameRobotAndGoal(span);
     }
 
     /// <summary>「自動」のときの目標範囲 (可動範囲の 80 %) を表示用に見積もる: 生成された学習設定があればそれ、無ければ 1.0。</summary>

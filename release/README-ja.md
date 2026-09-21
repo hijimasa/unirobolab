@@ -86,7 +86,9 @@ ROS 2 のイメージを作ります (10 分ほど、ネットワークが要り
 
 ## ライセンス
 
-UniRoboLab は Apache License 2.0 で配布します (`LICENSE`)。Unity のランタイム (Unity Technologies、
+UniRoboLab は Apache License 2.0 で配布します (`LICENSE`)。日本語の表示には、ビルドした PC の
+システムフォント (Noto Sans CJK、SIL Open Font License 1.1) から焼いた文字アトラスを同梱しています。
+Unity のランタイム (Unity Technologies、
 Unity 利用規約に基づく) と、Apache License 2.0 のパッケージ
 ([Unity_ROS2_Robot_Simulator](https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator)、
 ROS-TCP-Connector と URDF-Importer (Unity Technologies、hijimasa によるフォーク)) を同梱しています。

@@ -15,6 +15,7 @@ public static class BuildPlayer
         string output = Arg("-buildOutput") ?? "../../generated/player/UniRoboLab.x86_64";
         string targetArg = (Arg("-playerTarget") ?? "linux").ToLowerInvariant();
         BuildTarget target = targetArg.StartsWith("win") ? BuildTarget.StandaloneWindows64 : BuildTarget.StandaloneLinux64;
+        LabFontBuilder.Build();     // 日本語のアトラスを焼いて Resources に置く (実行時生成は player で描画されない)
         if (!File.Exists(LabSceneBuilder.ScenePath)) LabSceneBuilder.Build();
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output)));
         var opts = new BuildPlayerOptions

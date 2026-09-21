@@ -3,7 +3,7 @@
 Dates are the day the work landed in this repository. Versions follow the Python package
 (`python/pyproject.toml`), which is also the version of the release zips.
 
-## 0.1.0 — 2026-09-21
+## 0.1.0 — 2026-09-22
 
 First public release: the six-step wizard, from a URDF to a ROS 2 package that has been checked in
 simulation. Linux (x86_64) and Windows (x64) zips contain the player, the Python package, the
@@ -35,6 +35,8 @@ scripts and the tutorial.
   gave the best policy (70.8 % nominal, 48.3 % under randomization).
 - `unirobolab eval` scores a policy under conditions other than the ones it trained in.
 - Checkpoints every 50k steps, so a simulator crash does not lose the run.
+- Robots in a parallel run are spaced by what the task needs, so they no longer drive into or push
+  each other's workspace (a wheeled robot with 2.5 m goals needs 6 m, not the old fixed 0.6 m).
 
 ### Checking and deployment
 
@@ -64,13 +66,44 @@ scripts and the tutorial.
 - The check container no longer derives from the `Unity_ROS2_sample` image and no longer mounts its
   workspace.
 
+### From the first outside UX review
+
+An outside agent ran the three robots through the wizard with only the tutorial to go on
+(`docs/reviews/2026-09-20-ux-review-result.md`). What its 28 findings changed:
+
+- **Step ⑤ runs wherever the project is.** The container used to reach only projects inside the
+  repository, which stopped the review after ①〜④. It now mounts the selected project at its own
+  path, and ⑥ refuses to generate while the latest ⑤ result is missing, failed or stale.
+- **A failed child process says why.** Training, the live run and the check summarise the cause and
+  the next step in the status line (communication loss, port conflict, missing Python environment,
+  missing inputs) instead of only pointing at a log.
+- **Units everywhere.** The check result of an object task said "rad" for a distance in metres; the
+  training status line gave an error and a target with no unit at all. Both now say `m` or `rad`.
+- **The training graph fits the run.** Its y axis was capped at five times the tolerance, so a run
+  whose error was still far above it drew every point stuck to the top edge.
+- **The estimate matches the measurement.** Step ② assumed one training speed for every robot, so a
+  wheeled robot was told "about 2 minutes" for a run that takes 40. Speeds are now per task kind.
+- **Step ② shows the robot.** The screen could open on an empty floor (⑤ removes the entities), and
+  the goal was framed without the robot, so reachability could not be judged. It now spawns a
+  preview robot and frames both, from an angle that shows the structure.
+- **Text no longer disappears.** On a crowded screen the labels of buttons and sliders were blank:
+  a fixed-height wrapped label squeezed the column, and a truncating text with too little room
+  draws nothing. Wrapped labels size themselves, single-line text overflows instead of vanishing,
+  and the Japanese font atlas is baked at build time rather than rasterised at run time.
+- **A URDF without materials is grey, not magenta.** Meshes with no usable material get a neutral
+  one, so a missing material no longer looks like a failed import.
+- **Smaller things**: continuous joints say so instead of showing a 0.00 .. 0.00 range; the check
+  reports progress in the interface language; "Next" is greyed with the missing prerequisite next
+  to it; step ⑥ restores what it generated when you come back; step ② says when a change has not
+  reached the generated files yet; the tutorial explains how to pick the robot's ROS 2 settings and
+  how to verify them, what the coordinate frames and the three "size" fields mean, and how to get
+  the generated package onto the robot.
+
 ### Known limits
 
 - One goal condition per task; grasping is not supported (pushing only).
 - ⑤ and the container are Linux-only. The Windows player is built and starts, but its helper
   commands run through Git for Windows' `bash.exe` and have not been exercised on real hardware.
 - Evaluating a trained policy varies by roughly ±10 % over 40 episodes.
-- Open points from the first outside UX review (`docs/reviews/2026-09-20-ux-review-result.md`):
-  the 3D view in ② does not always frame the robot together with the goal, the tutorial does not
-  explain the coordinate frames or how to pick the real robot's ROS 2 settings, and some units and
-  labels in ③ and ⑤ are still ambiguous.
+- Parallel training spaces the robots from the task (reach, travel, object placement), so a
+  wheeled robot with distant goals needs a wide grid and looks small in the 3D view.

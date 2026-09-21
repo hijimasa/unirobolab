@@ -26,6 +26,10 @@ public class LabWizard : MonoBehaviour
     Image m_PreviewCover;
     TMP_Text m_Status, m_Title, m_ProjectLabel;
     Button m_Back, m_Next, m_DetailsBtn;
+    TMP_Text m_NextHint;
+    float m_MaterialFixAt;
+    int m_RelayoutFrames;
+    readonly List<GameObject> m_EntityBuf = new List<GameObject>();
     Camera m_Cam;
     ExternalProcess m_EnvPy, m_EnvRos;
     readonly List<(string path, float at)> m_Shots = new List<(string, float)>();
@@ -148,6 +152,8 @@ public class LabWizard : MonoBehaviour
         m_Status = Ui.Label(frow.transform, "", 12f, Ui.Text, false);
         m_DetailsBtn = Ui.Btn(frow.transform, Ui.T("詳細", "Details"), () => ShowDetails(!ExpertShown), 80f);
         m_Back = Ui.Btn(frow.transform, Ui.T("← 戻る", "← Back"), () => GoTo(m_Current - 1, false), 100f);
+        m_NextHint = Ui.Label(frow.transform, "", 11f, Ui.Muted, false, 0f, 240f);
+        m_NextHint.alignment = TextAlignmentOptions.MidlineRight;
         m_Next = Ui.Btn(frow.transform, Ui.T("次へ →", "Next →"), () => { if (m_Phases[m_Current].OnNext()) GoTo(m_Current + 1, false); }, 110f);
         Ui.SetBtn(m_Next, null, Ui.BtnActive);
         foreach (Phase ph in m_Phases) { ph.W = this; ph.Build(m_Main, m_Details); ph.Root.SetActive(false); if (ph.DetailsRoot != null) ph.DetailsRoot.SetActive(false); }
@@ -182,6 +188,7 @@ public class LabWizard : MonoBehaviour
             SetPreview(ph.Preview);
         }
         ph.Enter();
+        m_RelayoutFrames = 3;   // 表示直後の数フレームでレイアウトと文字組みを作り直す (Update を参照)
         RefreshStepper();
         if (Application.isBatchMode) Debug.Log($"[Wizard] phase {index + 1}: {ph.Title}");
     }
@@ -198,9 +205,20 @@ public class LabWizard : MonoBehaviour
             Ui.SetBtn(m_StepButtons[i], mark + ph.Title, i == m_Current ? Ui.BtnActive : (ph.Stale() ? new Color(0.55f, 0.40f, 0.20f) : (ph.Done() ? Ui.BtnDone : Ui.BtnNormal)), can);
         }
         m_Back.interactable = m_Current > 0;
-        bool nextOk = m_Current < m_Phases.Count - 1 && m_Phases[m_Current].CanProceed(out string reason);
+        // 「次へ」は、今のフェーズが進めること *と* 次のフェーズに入れることの両方が揃ってから押せる。
+        // 押せないときは灰色にし、足りないものを横に出す (青いまま押させて「まだです」と返すのをやめる)。
+        string block = "";
+        bool last = m_Current >= m_Phases.Count - 1;
+        bool nextOk = !last && m_Phases[m_Current].CanProceed(out block);
+        if (nextOk && !m_Phases[m_Current + 1].CanEnter(out string enterReason))
+        {
+            // ② は「次へ」が生成そのものなので、③ にまだ入れなくても押せる
+            nextOk = m_Phases[m_Current].Key == "task";
+            if (!nextOk) block = enterReason;
+        }
         m_Next.interactable = nextOk;
-        if (!nextOk && m_Current < m_Phases.Count - 1) m_Next.GetComponentInChildren<TMP_Text>().text = Ui.T("次へ →", "Next →");
+        Ui.SetBtn(m_Next, Ui.T("次へ →", "Next →"), nextOk ? Ui.BtnActive : Ui.BtnNormal);
+        if (m_NextHint != null) m_NextHint.text = last ? "" : (nextOk ? "" : block);
     }
 
     public void ShowDetails(bool on)
@@ -272,7 +290,26 @@ public class LabWizard : MonoBehaviour
             m_EnvRos.WaitForExit(); string last = "none"; while (m_EnvRos.TryDequeue(out string l)) last = l.Trim();
             Env.Ros2 = last; m_EnvRos = null;
         }
+        // フェーズを開いた直後: 行数の多い画面では、レイアウトが幅を決める前に TMP が文字を組んでしまい、
+        // 「入る文字が無い」と判断して何も描かないことがある (ボタンの文字が消える)。レイアウトを確定させ、
+        // すべてのテキストに組み直させる。次のフレームでもう一度 (入れ子のレイアウトは 1 回では確定しない)。
+        if (m_RelayoutFrames > 0)
+        {
+            m_RelayoutFrames--;
+            Canvas.ForceUpdateCanvases();
+            if (Current?.Root != null)
+            {
+                LayoutRebuilder.ForceRebuildLayoutImmediate((RectTransform)Current.Root.transform);
+                foreach (TMP_Text t in Current.Root.GetComponentsInChildren<TMP_Text>(true)) t.SetAllDirty();
+            }
+        }
         Current?.Tick();
+        // 材質を書いていない URDF がマゼンタで出る問題の手当て (スポーン直後の 1 回だけ)。1 秒ごとに新顔を見る。
+        if (Sim != null && Time.realtimeSinceStartup >= m_MaterialFixAt)
+        {
+            m_MaterialFixAt = Time.realtimeSinceStartup + 1f;
+            m_EntityBuf.Clear(); Sim.GetEntitiesSnapshot(m_EntityBuf); MeshMaterialFix.ApplyToNewEntities(m_EntityBuf);
+        }
         if (m_ActionAt > 0f && Time.realtimeSinceStartup >= m_ActionAt)
         {
             m_ActionAt = -1f;

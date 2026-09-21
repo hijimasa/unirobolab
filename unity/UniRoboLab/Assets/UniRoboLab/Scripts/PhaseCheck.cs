@@ -155,7 +155,8 @@ public class PhaseCheck : Phase
                 {
                     string rest = l.Substring(7); int n = rest.Length > 0 && char.IsDigit(rest[0]) ? rest[0] - '0' : 0;
                     for (int i = 0; i < 5; i++) { if (i < n - 1) { m_Steps[i].text = $"✓ {i + 1}. " + (Ui.Japanese ? k_StepsJa[i] : k_StepsEn[i]); m_Steps[i].color = Ui.Accent; } else if (i == n - 1) { m_Steps[i].text = $"● {i + 1}. " + (Ui.Japanese ? k_StepsJa[i] : k_StepsEn[i]); m_Steps[i].color = Ui.Header; } }
-                    W.Status(rest);
+                    // 実行器の ##STEP は英語なので、画面には翻訳済みの段階名を出す
+                    W.Status(n >= 1 && n <= 5 ? $"{n}/5 " + (Ui.Japanese ? k_StepsJa[n - 1] : k_StepsEn[n - 1]) : rest);
                     if (n == 4) FrameOnRobot();
                     if (Application.isBatchMode) Debug.Log("[Wizard/check] " + l);
                 }

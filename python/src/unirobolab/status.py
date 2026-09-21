@@ -23,7 +23,7 @@ _HINTS = {
 }
 
 
-def train_status(rows: list[dict], total_timesteps: int, n_envs: int, wall_s: float,
+def train_status(rows: list[dict], total_timesteps: int, n_envs: int, wall_s: float, unit: str = "",
                  tolerance: float | None = None, window: int = 200, early_stop: dict | None = None,
                  phase: str = "training") -> dict:
     """rows: progress.csv の行 (dict)。tolerance: 成功とみなす最終誤差 (関節: early_stop の閾値、
@@ -64,6 +64,7 @@ def train_status(rows: list[dict], total_timesteps: int, n_envs: int, wall_s: fl
         "success_rate": round(success_rate, 4),
         "final_abs_err_mean": None if err_mean is None else round(err_mean, 4),
         "tolerance": tolerance,
+        "unit": unit,            # 誤差と許容の単位 ("rad" | "m")。空なら単位を出さない
         "early_stop": early_stop,
         "hints": [{"key": k, "ja": _HINTS[k]["ja"], "en": _HINTS[k]["en"]} for k in hints],
     }
@@ -85,9 +86,11 @@ def format_text(st: dict, lang: str = "ja") -> str:
         parts.append((f"成功率 {st['success_rate'] * 100:.0f}% (直近 {st['window']} 回)" if ja
                       else f"success {st['success_rate'] * 100:.0f}% (last {st['window']})"))
         if st["final_abs_err_mean"] is not None:
-            tol = f" / 目標 {st['tolerance']:g}" if (ja and st["tolerance"] is not None) else (
-                f" / target {st['tolerance']:g}" if st["tolerance"] is not None else "")
-            parts.append((f"誤差 {st['final_abs_err_mean']:.3f}{tol}" if ja else f"error {st['final_abs_err_mean']:.3f}{tol}"))
+            u = f" {st['unit']}" if st.get("unit") else ""
+            tol = f" / 目標 {st['tolerance']:g}{u}" if (ja and st["tolerance"] is not None) else (
+                f" / target {st['tolerance']:g}{u}" if st["tolerance"] is not None else "")
+            parts.append((f"誤差 {st['final_abs_err_mean']:.3f}{u}{tol}" if ja
+                          else f"error {st['final_abs_err_mean']:.3f}{u}{tol}"))
     if st["phase"] == "training" and st["eta_s"] is not None:
         m = int(st["eta_s"] // 60)
         parts.append((f"残り およそ {m} 分" if m >= 1 else "残り 1 分未満") if ja else (f"about {m} min left" if m >= 1 else "under a minute left"))

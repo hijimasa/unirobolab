@@ -88,7 +88,9 @@ the player's own log is `~/.config/unity3d/UniRoboLab/UniRoboLab/Player.log` on 
 
 ## License
 
-UniRoboLab is released under the Apache License 2.0 (see `LICENSE`). It bundles the Unity runtime
+UniRoboLab is released under the Apache License 2.0 (see `LICENSE`). The Japanese text is rendered
+with a font atlas baked from the system font found on the build machine (Noto Sans CJK, SIL Open
+Font License 1.1). It bundles the Unity runtime
 (Unity Technologies, under the Unity Terms of Service) and packages under the Apache License 2.0:
 [Unity_ROS2_Robot_Simulator](https://github.com/REACT-ROBOT/Unity_ROS2_Robot_Simulator),
 ROS-TCP-Connector and URDF-Importer (Unity Technologies, forks by hijimasa). UniRoboLab is an

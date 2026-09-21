@@ -30,12 +30,55 @@ public static class Ui
     public static string T(string ja, string en) => Japanese ? ja : en;
 
     /// <summary>OS の日本語フォントから TMP の動的フォントを作ってフォールバックに足す。無ければ英語表示。</summary>
+    static TMP_FontAsset s_Font;
+
+    /// <summary>作った TMP のテキストに日本語フォントを直接あてる。予備フォント (fallback) 任せにすると、
+    /// 予備側の字を描く子メッシュが作られ、無効な状態で作られた画面では日本語が丸ごと出ない
+    /// (ボタンの文字が消え、ラベルが ASCII の 1 文字で切れる)。直接あてればその経路を通らない。</summary>
+    static void ApplyFont(TMP_Text t)
+    {
+        if (s_Font != null && t != null) t.font = s_Font;
+    }
+
     public static void EnsureJapaneseFont()
     {
         if (s_FontProbed) return;
         s_FontProbed = true;
         try
         {
+            // ビルド時に焼いたアセット (Editor/LabFontBuilder)。実行時のラスタライズが要らないので、
+            // 画面によって文字が消える問題が起きない。
+            TMP_FontAsset baked = Resources.Load<TMP_FontAsset>("JapaneseFont");
+            if (baked != null)
+            {
+                UseFont(baked, "Resources/JapaneseFont (baked)");
+                return;
+            }
+
+            // 日本語は画面に出る字種が多い。TMP の既定の作り方 (CreateFontAsset(family, style, size)) は
+            // 1024x1024 のアトラスなので、この画面数の日本語では途中で埋まり、以後に必要になった字が
+            // 空白になる (ボタンの文字が消える、ラベルが 1 文字で切れる)。フォントのファイルを直接指定して
+            // 4096x4096 で作る。見つからなければ従来の作り方に落ちる。
+            string[] keys = { "notosanscjk", "notosansjp", "yugoth", "meiryo", "hiragino", "ipagothic", "ipaexgothic",
+                              "ipag", "takao", "vlgothic", "droidsansfallback", "notoserifcjk" };
+            foreach (string key in keys)
+            {
+                foreach (string path in Font.GetPathsToOSFonts())
+                {
+                    string file = System.IO.Path.GetFileName(path).ToLowerInvariant().Replace("-", "").Replace("_", "");
+                    if (!file.Contains(key)) continue;
+                    TMP_FontAsset fa = null;
+                    try
+                    {
+                        fa = TMP_FontAsset.CreateFontAsset(path, 0, 32, 6, UnityEngine.TextCore.LowLevel.GlyphRenderMode.SDFAA, 4096, 4096);
+                    }
+                    catch (Exception) { fa = null; }
+                    if (fa == null) continue;
+                    fa.isMultiAtlasTexturesEnabled = true;
+                    UseFont(fa, path);
+                    return;
+                }
+            }
             string[] installed = Font.GetOSInstalledFontNames();
             var candidates = new List<string>();
             foreach (string key in new[] { "noto sans cjk jp", "noto sans jp", "yu gothic ui", "meiryo", "hiragino sans", "noto sans cjk", "droid sans fallback", "ipagothic", "ipaexgothic", "takao", "vl gothic" })
@@ -50,16 +93,33 @@ public static class Ui
                     if (fa != null) break;
                 }
                 if (fa == null) continue;
-                var fallbacks = TMP_Settings.fallbackFontAssets ?? new List<TMP_FontAsset>();
-                fallbacks.Add(fa);
-                TMP_Settings.fallbackFontAssets = fallbacks;
-                Japanese = true;
-                Debug.Log("[Ui] japanese font: " + name);
+                fa.isMultiAtlasTexturesEnabled = true;
+                UseFont(fa, name);
                 return;
             }
             Debug.Log("[Ui] no japanese OS font; english text");
         }
         catch (Exception e) { Debug.LogWarning("[Ui] font probe failed: " + e.Message); }
+    }
+
+    static void UseFont(TMP_FontAsset fa, string source)
+    {
+        var fallbacks = TMP_Settings.fallbackFontAssets ?? new List<TMP_FontAsset>();
+        fallbacks.Add(fa);
+        TMP_Settings.fallbackFontAssets = fallbacks;
+        Japanese = true;
+        s_Font = fa;
+        // 画面に出る日本語をまとめて焼いておく。必要になってから足す方式だと、アトラスが埋まった時点で
+        // 以後の文字が空白になり、ボタンの文字が消える。ここで入らなければログに出る (診断用)。
+        if (fa.atlasPopulationMode != AtlasPopulationMode.Static)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (char c = ' '; c <= '~'; c++) sb.Append(c);   // ASCII (パス、関節名、数値)
+            sb.Append(UiCharacters.All);                      // 画面に出る日本語と記号 (自動生成)
+            fa.TryAddCharacters(sb.ToString(), out _);
+        }
+        Debug.Log($"[Ui] japanese font: {source} (atlas {fa.atlasWidth}x{fa.atlasHeight} x{fa.atlasTextures.Length}, "
+                  + $"glyphs {fa.characterTable.Count}, mode {fa.atlasPopulationMode})");
     }
 
     // ------------------------------------------------------------------ layout
@@ -103,11 +163,26 @@ public static class Ui
     {
         var go = new GameObject("Label", typeof(RectTransform), typeof(LayoutElement));
         go.transform.SetParent(parent, false);
-        var le = go.GetComponent<LayoutElement>(); le.preferredHeight = height > 0f ? height : size + 8f; le.flexibleHeight = 0f;
+        var le = go.GetComponent<LayoutElement>(); le.flexibleHeight = 0f;
+        if (wrap)
+        {
+            // 折り返す文は行数が中身で決まる。ここで高さを固定すると、実際に必要な高さと食い違ったときに
+            // レイアウトと TMP の組版が噛み合わず、同じ画面の他のテキストまで組まれずに消える
+            // (② の物体タスクでボタンの文字が全部消えていた)。最低限だけ決めて、高さは TMP に任せる。
+            le.minHeight = height > 0f ? height : size + 8f;
+            le.preferredHeight = -1f;
+        }
+        else
+        {
+            le.preferredHeight = height > 0f ? height : size + 8f;
+        }
         if (width > 0f) { le.preferredWidth = width; le.flexibleWidth = 0f; }
-        var tmp = go.AddComponent<TextMeshProUGUI>();
+        var tmp = go.AddComponent<TextMeshProUGUI>(); ApplyFont(tmp);
         tmp.text = text; tmp.fontSize = size; tmp.color = color ?? Text; tmp.enableWordWrapping = wrap;
-        tmp.overflowMode = TextOverflowModes.Truncate; tmp.alignment = TextAlignmentOptions.MidlineLeft;
+        // Overflow にする: 行の高さが足りないとき、Truncate は「入らない」と判断して何も描かない。
+        // 画面が縦に詰まると文字が消えてしまうので、はみ出してでも描く
+        tmp.overflowMode = wrap ? TextOverflowModes.Truncate : TextOverflowModes.Overflow;
+        tmp.alignment = TextAlignmentOptions.MidlineLeft;
         return tmp;
     }
 
@@ -117,6 +192,13 @@ public static class Ui
         go.transform.SetParent(parent, false);
         var le = go.AddComponent<LayoutElement>(); le.layoutPriority = 2; le.preferredHeight = height; le.flexibleHeight = 0f;   // TMP_InputField 自身の申告より優先
         var f = go.GetComponent<TMP_InputField>();
+        ApplyFont(f.textComponent); ApplyFont(f.placeholder as TMP_Text);
+        // 入力欄は内側に RectMask2D を持つ。マスクの切り取りはマテリアル単位なので、フォントの共有
+        // マテリアルのままだと、同じフォントを使う画面上の別のテキスト (ボタンの文字など) まで切り取られて
+        // 消える。入力欄のテキストには専用のマテリアルを持たせて切り離す。
+        if (f.textComponent != null) f.textComponent.fontMaterial.name = "InputText";
+        TMP_Text placeholderText = f.placeholder as TMP_Text;
+        if (placeholderText != null) placeholderText.fontMaterial.name = "InputPlaceholder";
         f.pointSize = 12f;
         if (f.placeholder is TMP_Text ph) { ph.text = placeholder; ph.fontSize = 12f; }
         if (multiline) { f.lineType = TMP_InputField.LineType.MultiLineNewline; f.textComponent.alignment = TextAlignmentOptions.TopLeft; }
@@ -134,7 +216,7 @@ public static class Ui
         var tgo = new GameObject("Text", typeof(RectTransform));
         tgo.transform.SetParent(go.transform, false);
         var rt = tgo.GetComponent<RectTransform>(); rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.offsetMin = new Vector2(6, 2); rt.offsetMax = new Vector2(-6, -2);
-        var tmp = tgo.AddComponent<TextMeshProUGUI>(); tmp.text = label; tmp.fontSize = 13f; tmp.color = Header; tmp.alignment = TextAlignmentOptions.Center; tmp.overflowMode = TextOverflowModes.Truncate;
+        var tmp = tgo.AddComponent<TextMeshProUGUI>(); ApplyFont(tmp); tmp.text = label; tmp.fontSize = 13f; tmp.color = Header; tmp.alignment = TextAlignmentOptions.Center; tmp.overflowMode = TextOverflowModes.Overflow;
         go.GetComponent<Image>().color = BtnNormal;
         var b = go.GetComponent<Button>();
         var colors = b.colors; colors.normalColor = Color.white; colors.highlightedColor = new Color(1.15f, 1.15f, 1.15f); colors.pressedColor = new Color(0.8f, 0.8f, 0.8f); colors.disabledColor = new Color(0.6f, 0.6f, 0.6f, 0.6f); b.colors = colors;

@@ -99,7 +99,7 @@ public class PhaseRobot : Phase
             var rs = e.GetComponentsInChildren<Renderer>();
             if (rs.Length == 0) break;
             Bounds b = rs[0].bounds; foreach (Renderer r in rs) b.Encapsulate(r.bounds);
-            cam.target = b.center; cam.distance = Mathf.Max(0.8f, b.extents.magnitude * 3f);
+            cam.SetAngle(35f, 30f); cam.Frame(b);   // 斜め上から、全体が入る距離で
             return;
         }
         cam.target = new Vector3(0f, 0.15f, 0f); cam.distance = 1.6f;
@@ -121,7 +121,12 @@ public class PhaseRobot : Phase
                       + (m_RobotInfo.imu ? " / IMU" : "") + (m_RobotInfo.odom ? " / odom" : "");
         var t = new StringBuilder();
         foreach (RobotJoint j in m_RobotInfo.joints)
-            t.AppendLine($"{j.name,-24} {Mode(j.mode),-6} {j.lower,6:F2} .. {j.upper,-6:F2} {(j.type == "prismatic" ? "m" : "rad"),-4} {j.velocity,5:F1} {(j.type == "prismatic" ? "m/s" : "rad/s")}");
+        {
+            // 連続回転の関節は URDF に可動範囲が無いので 0..0 になる。そのまま出すと固定関節に見える
+            string range = j.type == "continuous" ? Ui.T("連続回転 (制限なし)", "continuous (no limit)")
+                                                  : $"{j.lower,6:F2} .. {j.upper,-6:F2} {(j.type == "prismatic" ? "m" : "rad")}";
+            t.AppendLine($"{j.name,-24} {Mode(j.mode),-6} {range,-22} {j.velocity,5:F1} {(j.type == "prismatic" ? "m/s" : "rad/s")}");
+        }
         m_Table.text = t.ToString();
         m_Validation.text = Ui.T($"✓ 関節 {m_RobotInfo.joints.Count} 個を読み取りました", $"✓ {m_RobotInfo.joints.Count} joints read"); m_Validation.color = Ui.Accent;
         W.Status(Ui.T("関節名と接続先が実機と合っているか確かめて「次へ」", "Check the joint names and the connection, then Next"));

@@ -98,3 +98,29 @@ def test_randomize_and_history_reach_configs(tmp_path):
     assert t["task"]["randomize"]["object_mass"] == [0.5, 2.0] and c["policy"]["history_length"] == 8
     spec["training"]["randomize"] = {"gravity": [1, 2]}
     assert any("randomize.gravity" in p for p in validate(spec))
+
+
+def test_estimate_uses_measured_rate_per_task_kind():
+    from unirobolab.taskspec import estimate_time_s
+    base = {"goal": [{"type": "base_in_region", "tolerance": 0.15}], "training": {"n_envs": 8}}
+    joints = {"goal": [{"type": "joints_near", "tolerance": 0.05}], "training": {"n_envs": 8}}
+    s_base, why = estimate_time_s(base)
+    s_joints, _ = estimate_time_s(joints)
+    # 差動二輪は 1 往復の物理が重い: 同じ並列数でサーボより桁で長くかかる
+    assert s_base > 10 * 60 and s_joints < 5 * 60
+    assert "③" in why
+
+
+def test_spawn_spacing_covers_travel_and_objects():
+    from unirobolab.taskspec import spawn_spacing
+    from pathlib import Path
+    fix = Path(__file__).parent / "fixtures"
+    # 移動基体: 開始から r_max まで動くので、隣とは往復分 + 車体の余裕が要る
+    base = {"goal": [{"type": "base_in_region", "region": {"shape": "ring", "r_min": 1.0, "r_max": 2.5}}]}
+    assert spawn_spacing(base, str(fix / "diffbot_nosensors.urdf")) >= 2 * 2.5
+    # 物体タスク: 目標の枠と物体の置き場所まで含める
+    obj = {"goal": [{"type": "object_in_region", "region": {"shape": "box", "center": [0.3, 0.45, 0.0], "size": [0.12, 0.12, 0.0]}}],
+           "objects": [{"name": "cube", "size": [0.05, 0.05, 0.05], "start": {"center": [0.55, 0.15, 0.0], "size": [0.06, 0.06, 0.0]}}]}
+    arm = spawn_spacing(obj, str(fix / "arm2_planar.urdf"))
+    assert arm > spawn_spacing({"goal": [{"type": "joints_near"}]}, str(fix / "arm2_planar.urdf")) - 1e-9
+    assert 1.5 < arm < 3.0

@@ -89,8 +89,20 @@ public class PhaseDeploy : Phase
         m_Head.color = checked_ ? Ui.Text : Ui.Warn;
         m_Make.interactable = checked_;
         if (string.IsNullOrEmpty(m_Out.text)) m_Out.text = string.IsNullOrEmpty(P.D.deploy_dir) ? Path.Combine(P.Dir, "deploy") : P.Abs(P.D.deploy_dir);
-        if (P.Exists("deploy")) ShowExisting();
-        W.Status(checked_ ? Ui.T("「作る」を押すとパッケージと手順書ができます", "Press the build button to create the package and the guide") : blockReason, checked_ ? (Color?)null : Ui.Warn);
+        bool made = P.Exists("deploy");
+        if (made) { ShowExisting(); RequestSummary(); }
+        W.Status(made ? Ui.T("生成済み: ", "already generated: ") + (m_PkgDir ?? P.Abs(P.D.deploy_dir)) + Ui.T(" (作り直すときは「作る」)", " (press the build button to regenerate)")
+                      : (checked_ ? Ui.T("「作る」を押すとパッケージと手順書ができます", "Press the build button to create the package and the guide") : blockReason),
+                 made ? Ui.Accent : (checked_ ? (Color?)null : Ui.Warn));
+    }
+
+    /// <summary>生成済みのときに接続先・安全の要約を出し直す (再開しても「何ができているか」が分かるように)。</summary>
+    void RequestSummary()
+    {
+        if (m_Proc != null && !m_Proc.HasExited) return;
+        if (m_PkgDir == null || !P.Has(P.D.contract)) return;
+        m_Step = 3;
+        m_Proc = W.Launch($"{W.Py} -m unirobolab deploy-guide {ExternalProcess.Quote(P.Abs(P.D.contract))} --package {ExternalProcess.Quote(Path.GetFileName(m_PkgDir.TrimEnd('/')))} --lang {(Ui.Japanese ? "ja" : "en")} --summary 2>&1");
     }
 
     void ShowExisting()
@@ -133,6 +145,7 @@ public class PhaseDeploy : Phase
         if (!m_Proc.HasExited) return;
         m_Proc.WaitForExit(); var sb = new StringBuilder(); while (m_Proc.TryDequeue(out string l)) sb.AppendLine(l);
         string text = sb.ToString().Trim(); bool ok = m_Proc.ExitCode == 0; m_Proc = null;
+        if (m_Step == 3) { m_Step = 0; if (ok) m_Summary.text = text; return; }   // 再開時の要約 (失敗しても黙って無視する)
         if (!ok) { W.Status(Ui.T("失敗: ", "failed: ") + text, Ui.Bad); m_Step = 0; return; }
         if (m_Step == 1)
         {

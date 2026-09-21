@@ -62,7 +62,8 @@ def preset(kind: str, urdf: str, name: str | None = None, namespace: str | None 
     else:
         raise TaskSpecError(f"unknown preset {kind!r} (joint_target | link_target | push_object | base_target)")
     spec = {"spec_version": SPEC_VERSION, "robot": robot,
-            "start": {"joints": "zero", "base": {"xy": [0.0, 0.0], "yaw_deg": [0.0, 0.0]}},
+            # 既定の向きは 180°: ロボットの正面がカメラを向き、台座や背面に隠れない (GUI の既定と同じ)
+            "start": {"joints": "zero", "base": {"xy": [0.0, 0.0], "yaw_deg": [180.0, 180.0]}},
             "goal": goal, "episode": episode, "training": {"n_envs": 8, "success_target": 0.9}}
     if kind == "push_object":
         spec["objects"] = [{"name": "cube", "shape": "box", "size": [0.05, 0.05, 0.05], "mass": 0.1,
@@ -154,9 +155,21 @@ def _region_to_radius(region: dict[str, Any], center_xy: list[float]) -> tuple[l
     return ([max(0.1, d - half), d + half], [-180.0, 180.0])
 
 
-def estimate_time_s(spec: dict[str, Any], env_steps_per_s: float = 1500.0) -> tuple[float, str]:
+# 8 体並列 1 秒あたりの env ステップ数 (このマシンでの実測。並列数は rate に (n/8)^0.7 で効く)。
+# ロボットが重いほど 1 往復の物理が重く、同じステップ数でも時間が延びる。関節 2 個のサーボと
+# 差動二輪では 8 倍違うので、ここを 1 つの値で代表すると ② の目安が桁で外れる。
+_ENV_STEPS_PER_S = {
+    "joints_near": 1150.0,        # servo 16 体で 1,850 env steps/s
+    "link_near": 600.0,           # 平面腕 (物体なし)
+    "object_in_region": 290.0,    # 平面腕 + 物体エンティティ (8 体で実測 274〜301)
+    "base_in_region": 145.0,      # diffbot 16 体で 233 env steps/s
+}
+
+
+def estimate_time_s(spec: dict[str, Any], env_steps_per_s: float | None = None) -> tuple[float, str]:
     """学習時間の目安 (秒) と根拠の 1 行。経験則: servo (関節 2、±1.2 rad、許容 0.05) で 13 万ステップ、
-    許容を半分にすると約 2.5 倍、diffbot (領域到達、許容 0.15 m) で 20 万ステップ。並列数は速度に効く。"""
+    許容を半分にすると約 2.5 倍、diffbot (領域到達、許容 0.15 m) で 20 万ステップ。並列数は速度に効く。
+    実際の速度は PC の空き具合とロボットの重さで変わるので、③ の残り時間 (実測) とはずれる。"""
     goal = spec.get("goal") or [{}]
     c = goal[0]
     n_envs = int(spec.get("training", {}).get("n_envs", 8))
@@ -176,8 +189,8 @@ def estimate_time_s(spec: dict[str, Any], env_steps_per_s: float = 1500.0) -> tu
         tol = float(c.get("tolerance", 0.05))
         steps = 130000 * (0.05 / max(tol, 1e-3)) ** 1.3
         why = f"関節目標、許容 {tol:g} rad、{n_envs} 体並列"
-    if c.get("type") == "object_in_region":
-        env_steps_per_s = min(env_steps_per_s, 300.0)   # 物体 (別エンティティ) の分だけ 1 往復が重い (実測 280〜300)
+    if env_steps_per_s is None:
+        env_steps_per_s = _ENV_STEPS_PER_S.get(c.get("type") or "joints_near", 1150.0)
     tr = spec.get("training", {})
     extra = []
     if spec.get("start", {}).get("joints", "zero") == "random":
@@ -188,8 +201,44 @@ def estimate_time_s(spec: dict[str, Any], env_steps_per_s: float = 1500.0) -> tu
         steps *= 1.2; extra.append("履歴窓")
     if extra:
         why += "、" + "・".join(extra) + "で長め"
+    why += "。おおよその目安で、実際の残り時間は ③ に出ます"
     rate = env_steps_per_s * (n_envs / 8.0) ** 0.7
     return steps / rate, why
+
+
+def spawn_spacing(spec: dict[str, Any], urdf: str, margin: float = 0.4) -> float:
+    """並列学習で隣のロボットと干渉しない間隔 [m]。ロボットが占める半径 (届く範囲、移動範囲、物体の
+    置き場所と目標) を出し、その 2 倍に余裕を足す。固定値のままだと、移動基体が隣へ乗り入れたり
+    腕が隣の物体を押したりして、並列の学習が互いに壊し合う。"""
+    from .fk import load_tree, reach_radius
+    try:
+        radius = reach_radius(load_tree(urdf))
+    except Exception:       # URDF が読めないときは余裕だけで決める
+        radius = 0.3
+    c = (spec.get("goal") or [{}])[0]
+    region = c.get("region") or {}
+
+    def _flat(center, size=None, radius_=None) -> float:
+        p = [float(v) for v in (center or [0.0, 0.0, 0.0])]
+        out = math.hypot(p[0], p[1] if len(p) > 1 else 0.0)
+        if size is not None and len(size) >= 2:
+            out += math.hypot(0.5 * abs(float(size[0])), 0.5 * abs(float(size[1])))
+        if radius_ is not None:
+            out += abs(float(radius_))
+        return out
+
+    t = c.get("type")
+    if t == "base_in_region":
+        # 開始位置から r_max まで動く。ロボット自身の大きさも足す
+        radius = float(region.get("r_max", 2.5)) + radius
+    elif t == "link_near":
+        radius = max(radius, _flat(region.get("center"), region.get("size"), region.get("radius")))
+    elif t == "object_in_region":
+        radius = max(radius, _flat(region.get("center"), region.get("size")))
+        for o in spec.get("objects") or []:
+            st = o.get("start") or {}
+            radius = max(radius, _flat(st.get("center"), st.get("size")) + max(abs(float(v)) for v in (o.get("size") or [0.05])))
+    return round(2.0 * radius + margin, 2)
 
 
 def generate(spec: dict[str, Any], spec_dir: str = ".") -> tuple[dict[str, Any], dict[str, Any]]:
@@ -225,11 +274,13 @@ def generate(spec: dict[str, Any], spec_dir: str = ".") -> tuple[dict[str, Any],
     if c["type"] == "object_in_region":
         _apply_object(spec, c, contract, task, es, urdf, tol)
         train["n_envs"] = int(spec.get("training", {}).get("n_envs", 8))
+        train["spawn_spacing"] = task["spawn_spacing"] = spawn_spacing(spec, urdf)
         contract["_task_spec"] = {"spec_version": SPEC_VERSION, "goal": spec["goal"], "episode": ep, "objects": spec.get("objects", [])}
         return contract, train
     if c["type"] == "link_near":
         _apply_link_near(spec, c, contract, task, es, urdf, tol)
         train["n_envs"] = int(spec.get("training", {}).get("n_envs", 8))
+        train["spawn_spacing"] = task["spawn_spacing"] = spawn_spacing(spec, urdf)
         contract["_task_spec"] = {"spec_version": SPEC_VERSION, "goal": spec["goal"], "episode": ep}
         return contract, train
     if c["type"] == "joints_near":
@@ -248,6 +299,7 @@ def generate(spec: dict[str, Any], spec_dir: str = ".") -> tuple[dict[str, Any],
         es.update({"metric": "success_rate", "threshold": float(spec.get("training", {}).get("success_target", 0.9))})
         task["_note"] = f"task.json: base_in_region {c.get('region', {}).get('shape')}, success within {tol} m"
     train["n_envs"] = int(spec.get("training", {}).get("n_envs", 8))
+    train["spawn_spacing"] = task["spawn_spacing"] = spawn_spacing(spec, urdf)
     contract["_task_spec"] = {"spec_version": SPEC_VERSION, "goal": spec["goal"], "episode": ep}
     return contract, train
 
