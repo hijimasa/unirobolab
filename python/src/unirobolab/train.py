@@ -65,9 +65,13 @@ class _EpisodeLogger:
         self.status_path = status_path
         self.status_ctx = status_ctx or {}
         self._status_t = 0.0
+        self.learner: dict = {}         # PPO の内部 (方策のばらつき、価値の説明率、更新の大きさ)
         self.checkpoint = None          # callable(model) set by run(); saves model.zip + policy.onnx
         self.checkpoint_every = 0
         self._ckpt_at = 0
+        self.updates_path = os.path.join(os.path.dirname(path), "updates.csv") if path else None
+        self._updates_writer = None
+        self._updates_f = None
 
         class CB(BaseCallback):
             def __init__(self):
@@ -104,6 +108,7 @@ class _EpisodeLogger:
                 now = time.monotonic()
                 if outer.status_path and now - outer._status_t >= 1.0:
                     outer._status_t = now
+                    outer.collect_learner(self.model)
                     outer.write_status("training", now - self.t0)
                 # 途中保存: シミュレータが落ちても学習の成果が丸ごと消えないよう、一定ステップごとに model と ONNX を書く
                 if outer.checkpoint_every > 0 and self.num_timesteps - outer._ckpt_at >= outer.checkpoint_every and outer.checkpoint:
@@ -121,6 +126,36 @@ class _EpisodeLogger:
         self.writer.writeheader()
         self.callback = CB()
 
+    # SB3 が更新のたびに記録する値 -> ライトユーザーに出す名前
+    _LEARNER_KEYS = (("train/std", "policy_std"), ("train/explained_variance", "explained_variance"),
+                     ("train/approx_kl", "approx_kl"), ("train/clip_fraction", "clip_fraction"),
+                     ("train/value_loss", "value_loss"), ("train/entropy_loss", "entropy_loss"),
+                     ("train/n_updates", "updates"))
+
+    def collect_learner(self, model) -> None:
+        """PPO の内部を拾って status.json に載せ、更新ごとに 1 行 updates.csv へ残す。
+        方策のばらつきが縮みすぎ / 価値関数が当たっていない / 更新が大きすぎる、を見分けるため。"""
+        values = getattr(getattr(model, "logger", None), "name_to_value", None)
+        if not values:
+            return
+        stat = {}
+        for key, name in self._LEARNER_KEYS:
+            if key in values:
+                v = float(values[key])
+                stat[name] = int(v) if name == "updates" else round(v, 6)
+        if not stat or stat.get("updates") == self.learner.get("updates"):
+            self.learner = stat or self.learner
+            return
+        self.learner = stat
+        stat = dict(stat); stat["timesteps"] = int(getattr(model, "num_timesteps", 0))
+        if self._updates_writer is None and self.updates_path:
+            self._updates_f = open(self.updates_path, "w", newline="")
+            self._updates_writer = csv.DictWriter(self._updates_f, fieldnames=["timesteps"] + [n for _, n in self._LEARNER_KEYS])
+            self._updates_writer.writeheader()
+        if self._updates_writer is not None:
+            self._updates_writer.writerow({k: stat.get(k) for k in self._updates_writer.fieldnames})
+            self._updates_f.flush()
+
     def write_status(self, phase: str, wall_s: float, extra: dict | None = None) -> None:
         """ライトユーザー向けの進捗 (status.json)。GUI が 1 秒ごとに読む。"""
         if not self.status_path:
@@ -129,7 +164,7 @@ class _EpisodeLogger:
         ctx = self.status_ctx
         st = train_status(self.rows, ctx.get("total_timesteps", 0), ctx.get("n_envs", 1), wall_s, ctx.get("unit", ""),
                           tolerance=ctx.get("tolerance"), window=ctx.get("window", 200),
-                          early_stop=ctx.get("early_stop"), phase=phase)
+                          early_stop=ctx.get("early_stop"), phase=phase, learner=self.learner)
         if ctx.get("extra"):
             st.update(ctx["extra"])
         if extra:
@@ -141,6 +176,9 @@ class _EpisodeLogger:
 
     def close(self):
         self.f.close()
+        if self._updates_f is not None:
+            self._updates_f.close()
+            self._updates_f = None
 
 
 class _StartCurriculum:

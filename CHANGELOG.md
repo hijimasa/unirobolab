@@ -99,6 +99,19 @@ An outside agent ran the three robots through the wizard with only the tutorial 
   how to verify them, what the coordinate frames and the three "size" fields mean, and how to get
   the generated package onto the robot.
 
+### Seeing what training is doing
+
+Success rate and error say whether it works, not why. Two views were added to step ③.
+
+- **Reward breakdown**: per-attempt contribution of every reward and penalty term, drawn over time
+  with a legend in plain words ("distance from hand to object", "jerky commands") and the trend
+  against the previous window. The data was already in `progress.csv` and was simply not shown.
+- **Inside the learner** (under Details): the policy's spread, how well the value function fits, and
+  how far each update moves the policy, each with a line saying what it means. They are also
+  recorded per update in `updates.csv`.
+- New advice is derived from both: penalties outweighing the reward, exploration collapsing early,
+  the value function not fitting, and updates that are too large.
+
 ### Known limits
 
 - One goal condition per task; grasping is not supported (pushing only).

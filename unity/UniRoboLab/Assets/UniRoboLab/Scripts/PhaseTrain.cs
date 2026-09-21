@@ -18,6 +18,17 @@ public class PhaseTrain : Phase
     ExternalProcess m_Train, m_StatusProc;
     string m_RunDir; float m_StatusNextAt; bool m_Finished;
     readonly StringBuilder m_LogBuf = new StringBuilder();
+    // 報酬の内訳 (何に対する報酬/罰が効いているか) と学習器の内部。成功率だけでは
+    // 「なぜ上がらないか」「学習自体が健全か」が読めないので、別のグラフと数値で出す。
+    RawImage m_TermCurve; Texture2D m_TermTex; TMP_Text m_TermLegend, m_TermAxis, m_Learner;
+    TrainStatusJson m_Status;
+    readonly List<string> m_TermKeys = new List<string>();
+    static readonly Color32[] k_TermColors =
+    {
+        new Color32(120, 200, 255, 255), new Color32(255, 170, 90, 255), new Color32(150, 230, 140, 255),
+        new Color32(230, 140, 220, 255), new Color32(240, 220, 110, 255), new Color32(140, 170, 255, 255),
+        new Color32(255, 130, 130, 255),
+    };
     StreamWriter m_LogFile;   // <run>/train.log: 学習器の出力を残す (失敗の原因を後で追える)
 
     public override void Build(RectTransform main, RectTransform details)
@@ -34,12 +45,19 @@ public class PhaseTrain : Phase
         m_AxisBottom = Ui.Label(Root.transform, "", 11f, Ui.Muted, true, 46f);
         m_AxisBottom.text = Ui.T("横軸: 試行の順 (左が最初)。青の点: その試行の終わりに目標からどれだけ離れていたか。橙の線: 成功とみなす誤差 (この線より下なら成功)。緑の線: 直近の試行で成功した割合 (右端の目盛 0〜100 %)",
                                 "x: attempts in order (first on the left). Blue dots: distance from the goal at the end of each attempt. Orange line: the error that counts as success (below it = success). Green line: share of recent attempts that succeeded (right scale 0-100 %)");
+        m_TermAxis = Ui.Label(Root.transform, Ui.T("報酬の内訳 (1 試行あたり。0 の線より上が報酬、下が罰)",
+                                                   "Reward breakdown (per attempt; above the middle line is reward, below is penalty)"), 11f, Ui.Muted);
+        m_TermTex = Ui.DarkTexture(560, 90);
+        m_TermCurve = Ui.Image(Root.transform, m_TermTex, 90f);
+        m_TermLegend = Ui.Label(Root.transform, "", 11f, Ui.Text, true, 30f);
         m_Hint = Ui.Label(Root.transform, "", 12f, Ui.Warn, true, 44f);
         m_Back2 = Ui.Btn(Root.transform, Ui.T("② に戻って条件を変える", "Back to step 2 to change the task"), () => W.GoTo(1, false), 260f, 26f);
         m_Back2.gameObject.SetActive(false);
         Ui.Spacer(Root.transform);
 
         DetailsRoot = Ui.Column(details, "TrainDetails", 4f);
+        Ui.Label(DetailsRoot.transform, Ui.T("学習器の内部 (健全に学習できているか)", "Inside the learner (is training healthy?)"), 12f, Ui.Muted);
+        m_Learner = Ui.Label(DetailsRoot.transform, "", 11f, Ui.Text, true, 92f);
         Ui.Label(DetailsRoot.transform, Ui.T("学習器のログ", "Trainer log"), 12f, Ui.Muted);
         m_Log = Ui.Label(DetailsRoot.transform, "", 10f, Ui.Text, true, 0f);
         m_Log.GetComponent<LayoutElement>().flexibleHeight = 1f; m_Log.alignment = TextAlignmentOptions.BottomLeft;
@@ -163,10 +181,14 @@ public class PhaseTrain : Phase
             string text = sb.ToString().Trim(); bool ok = m_StatusProc.ExitCode == 0; m_StatusProc = null;
             if (ok && text.Length > 0)
             {
+                // train-status の文章は「要約 / 内訳 / 学習器 / 次の一手...」の順。内訳と学習器は
+                // グラフと詳細で出すので、ここでは要約と「次の一手」だけを使う (件数は status.json が持つ)
                 string[] lines = text.Split('\n');
+                int hintCount = m_Status?.hints != null ? m_Status.hints.Length : 0;
                 m_Progress.text = lines[0];
-                m_Hint.text = lines.Length > 1 ? string.Join("\n", lines, 1, lines.Length - 1) : "";
-                m_Back2.gameObject.SetActive(lines.Length > 1);
+                m_Hint.text = hintCount > 0 && lines.Length >= hintCount
+                    ? string.Join("\n", lines, lines.Length - hintCount, hintCount) : "";
+                m_Back2.gameObject.SetActive(hintCount > 0);
                 if (Application.isBatchMode) Debug.Log("[Wizard/train] " + text.Replace('\n', ' '));
             }
             RedrawCurve();
@@ -178,7 +200,105 @@ public class PhaseTrain : Phase
         m_StatusNextAt = training ? Time.realtimeSinceStartup + 1f : -1f;
         string path = Path.Combine(m_RunDir, "status.json");
         if (!File.Exists(path)) return;
+        ReadStatusJson(path);
         m_StatusProc = W.Launch($"{W.Py} -m unirobolab train-status {ExternalProcess.Quote(path)} --lang {(Ui.Japanese ? "ja" : "en")} 2>&1");
+    }
+
+    /// <summary>報酬の内訳を 1 枚のグラフに重ねて描く。中央が 0 で、上が報酬、下が罰。
+    /// 「成功率が上がらない」ときに、近づけていないのか、罰ばかり溜まっているのかを見分けるため。</summary>
+    void RedrawTerms(List<List<float>> terms)
+    {
+        if (m_TermTex == null) return;
+        int w = m_TermTex.width, h = m_TermTex.height;
+        var px = new Color32[w * h];
+        var bg = new Color32(20, 20, 24, 255);
+        for (int i = 0; i < px.Length; i++) px[i] = bg;
+        int zero = h / 2;
+        for (int x = 0; x < w; x++) px[zero * w + x] = new Color32(70, 70, 80, 255);       // 0 の線
+        float hi = 0f;
+        var smoothed = new List<float[]>();
+        foreach (List<float> v in terms)
+        {
+            var row = new float[w];
+            for (int x = 0; x < w; x++)
+            {
+                int i0 = x * v.Count / Mathf.Max(1, w), i1 = Mathf.Min(v.Count, (x + 1) * v.Count / Mathf.Max(1, w));
+                if (i1 <= i0) i1 = i0 + 1;
+                float m = 0f; int n = 0;
+                for (int i = i0; i < i1 && i < v.Count; i++) { m += v[i]; n++; }
+                row[x] = n > 0 ? m / n : 0f;
+                hi = Mathf.Max(hi, Mathf.Abs(row[x]));
+            }
+            smoothed.Add(row);
+        }
+        // 縦の目盛: 最大値そのままだと、たまに出る大きな値 (成功時の加点など) で他の線が潰れる。
+        // 値の 90 % が入る高さに合わせ、はみ出す分は上下端で止める。
+        var mags = new List<float>();
+        foreach (float[] row in smoothed) foreach (float v in row) mags.Add(Mathf.Abs(v));
+        mags.Sort();
+        hi = mags.Count > 0 ? mags[Mathf.Clamp((int)(mags.Count * 0.9f), 0, mags.Count - 1)] : 0f;
+        if (hi < 1e-6f) hi = 1f;
+        for (int k = 0; k < smoothed.Count; k++)
+        {
+            Color32 c = k_TermColors[k % k_TermColors.Length];
+            float[] row = smoothed[k];
+            for (int x = 0; x < w; x++)
+            {
+                int y = Mathf.Clamp(zero + (int)(row[x] / hi * (zero - 2)), 0, h - 1);
+                px[y * w + x] = c;
+                if (y + 1 < h) px[(y + 1) * w + x] = c;
+            }
+        }
+        m_TermTex.SetPixels32(px); m_TermTex.Apply();
+        if (m_TermAxis != null)
+            m_TermAxis.text = Ui.T($"報酬の内訳 (1 試行あたり、縦は ±{hi:F2}。中央の線が 0 で、上が報酬、下が罰)",
+                                   $"Reward breakdown (per attempt, ±{hi:F2}; the middle line is 0, above is reward, below is penalty)");
+    }
+
+    /// <summary>status.json の構造部分 (報酬の内訳・学習器の内部・次の一手の件数) を読む。</summary>
+    void ReadStatusJson(string path)
+    {
+        try { m_Status = JsonUtility.FromJson<TrainStatusJson>(File.ReadAllText(path)); }
+        catch (Exception) { return; }
+        if (m_Status == null) return;
+        ShowLegend();
+        ShowLearner();
+    }
+
+    /// <summary>内訳の凡例: 効いている順に、色・名前・1 試行あたりの値・前の窓との増減。</summary>
+    void ShowLegend()
+    {
+        if (m_TermLegend == null) return;
+        if (m_Status?.terms == null || m_Status.terms.Length == 0) { m_TermLegend.text = ""; return; }
+        var sb = new StringBuilder();
+        foreach (TrainTerm t in m_Status.terms)
+        {
+            int i = m_TermKeys.IndexOf(t.key);
+            Color32 c = i >= 0 ? k_TermColors[i % k_TermColors.Length] : (Color32)Ui.Muted;
+            if (sb.Length > 0) sb.Append("   ");
+            sb.Append($"<color=#{c.r:X2}{c.g:X2}{c.b:X2}>■</color> {t.Name} {t.mean:+0.00;-0.00}{t.Arrow}");
+        }
+        m_TermLegend.text = sb.ToString();
+    }
+
+    /// <summary>学習器の内部を、何を意味するかを添えて出す (詳細パネル)。</summary>
+    void ShowLearner()
+    {
+        if (m_Learner == null) return;
+        TrainLearner l = m_Status?.learner;
+        if (l == null || l.updates < 0) { m_Learner.text = Ui.T("(学習を始めると出ます)", "(appears once training starts)"); return; }
+        var sb = new StringBuilder();
+        if (l.policy_std >= 0f)
+            sb.AppendLine(Ui.T($"方策のばらつき {l.policy_std:F3}: 大きいほど色々試している。早く 0 に近づくと探索をやめて頭打ちになる",
+                               $"policy spread {l.policy_std:F3}: larger means more exploration; collapsing to 0 early means it stopped exploring"));
+        if (l.explained_variance > -900f)
+            sb.AppendLine(Ui.T($"価値の説明率 {l.explained_variance * 100f:F0} %: 「この状態はどれくらい良いか」の予測の当たり具合。0 付近なら当たっていない",
+                               $"value fit {l.explained_variance * 100f:F0} %: how well it predicts the value of a state; near 0 means it does not"));
+        if (l.approx_kl >= 0f)
+            sb.AppendLine(Ui.T($"更新の大きさ {l.approx_kl:F4} (打ち切り {l.clip_fraction * 100f:F0} %): 1 回の更新で方策がどれだけ変わったか。0.05 を超えると不安定",
+                               $"update size {l.approx_kl:F4} (clipped {l.clip_fraction * 100f:F0} %): how far the policy moved in one update; above 0.05 is unstable"));
+        sb.Append(Ui.T($"更新回数 {l.updates}", $"updates {l.updates}"));
+        m_Learner.text = sb.ToString();
     }
 
     /// <summary>学習設定の spawn_spacing [m] (task-gen がタスクから決める)。読めなければ 1 m。</summary>
@@ -195,18 +315,26 @@ public class PhaseTrain : Phase
         string path = Path.Combine(m_RunDir ?? "", "progress.csv");
         if (!File.Exists(path) || m_CurveTex == null) return;
         var err = new List<float>(); var suc = new List<float>();
+        var terms = new List<List<float>>();        // 報酬の内訳 (列ごと)。m_TermKeys と同じ並び
         try
         {
             using var r = new StreamReader(path);
             string header = r.ReadLine(); if (header == null) return;
             string[] cols = header.Split(',');
             int iErr = Array.IndexOf(cols, "final_abs_err"), iSuc = Array.IndexOf(cols, "success");
+            var termCols = new List<int>();
+            m_TermKeys.Clear();
+            for (int i = 0; i < cols.Length; i++)
+                if (cols[i].StartsWith("term_")) { termCols.Add(i); m_TermKeys.Add(cols[i].Substring(5)); terms.Add(new List<float>()); }
             string line;
             while ((line = r.ReadLine()) != null)
             {
                 string[] f = line.Split(',');
                 if (f.Length <= Math.Max(iErr, iSuc)) continue;
-                if (float.TryParse(f[iErr], out float e)) { err.Add(e); suc.Add(iSuc >= 0 && float.TryParse(f[iSuc], out float sv) ? sv : 0f); }
+                if (!float.TryParse(f[iErr], out float e)) continue;
+                err.Add(e); suc.Add(iSuc >= 0 && float.TryParse(f[iSuc], out float sv) ? sv : 0f);
+                for (int k = 0; k < termCols.Count; k++)
+                    terms[k].Add(termCols[k] < f.Length && float.TryParse(f[termCols[k]], out float tv) ? tv : 0f);
             }
         }
         catch (IOException) { return; }
@@ -243,6 +371,7 @@ public class PhaseTrain : Phase
         for (int x = 0; x < w; x++) { px[yTol * w + x] = new Color32(255, 170, 60, 255); if (yTol + 1 < h) px[(yTol + 1) * w + x] = new Color32(255, 170, 60, 255); }
         Plot(rate, new Color32(90, 220, 120, 255), 0f, 1f, 3); Plot(err, new Color32(90, 160, 255, 255), 0f, eHi, 2);
         m_CurveTex.SetPixels32(px); m_CurveTex.Apply();
+        RedrawTerms(terms);
         string unit = spec.Goal0.type == "joints_near" ? "rad" : "m";
         float last = rate.Count > 0 ? rate[rate.Count - 1] : 0f;
         m_AxisTop.text = Ui.T($"縦軸: 誤差 0 〜 {eHi:F2} {unit}   橙の線: 成功の目標 {tol:g} {unit}   緑: 成功率 (今 {last * 100f:F0} %)   試行 {err.Count} 回",

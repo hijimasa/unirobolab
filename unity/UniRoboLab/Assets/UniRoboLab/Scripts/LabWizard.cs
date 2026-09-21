@@ -90,6 +90,7 @@ public class LabWizard : MonoBehaviour
         string ph = Environment.GetEnvironmentVariable("SIM_WIZARD_PHASE");
         if (!string.IsNullOrEmpty(ph) && int.TryParse(ph, out int n)) start = Mathf.Clamp(n - 1, 0, m_Phases.Count - 1);
         GoTo(start, true);
+        if (Environment.GetEnvironmentVariable("SIM_WIZARD_DETAILS") != null) ShowDetails(true);   // 撮影・確認用
         string shots = Environment.GetEnvironmentVariable("SIM_GUI_SCREENSHOT");
         if (!string.IsNullOrEmpty(shots))
         {

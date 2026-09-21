@@ -44,3 +44,28 @@ def test_format_text_phases():
     st = train_status(_rows(10, 0.01), 1000, 4, 5.0, tolerance=0.05, window=10, phase="done")
     text = format_text(st)
     assert text.startswith("学習が終わりました") and "4 体並列" in text and "残り" not in text
+
+
+def test_term_breakdown_names_and_shares():
+    from unirobolab.status import term_breakdown, train_status
+    rows = [{"episode": i, "timesteps": i * 100, "final_abs_err": 0.2, "success": 0,
+             "term_progress": 1.0, "term_action_rate": -3.0} for i in range(1, 41)]
+    terms = term_breakdown(rows, window=20)
+    by = {t["key"]: t for t in terms}
+    assert by["action_rate"]["ja"] == "動きの荒さ" and by["action_rate"]["penalty"] is True
+    assert by["progress"]["penalty"] is False
+    assert terms[0]["key"] == "action_rate"          # 効いている順
+    assert by["progress"]["has_prev"] is True
+    assert abs(sum(t["share"] for t in terms) - 1.0) < 1e-6
+
+
+def test_status_reports_learner_and_warns_on_collapse():
+    from unirobolab.status import train_status
+    rows = [{"episode": i, "timesteps": i * 100, "final_abs_err": 0.5, "success": 0,
+             "term_progress": 0.1, "term_action_rate": -2.0} for i in range(1, 401)]
+    st = train_status(rows, total_timesteps=60000, n_envs=8, wall_s=60.0, tolerance=0.05, window=100,
+                      learner={"policy_std": 0.02, "explained_variance": 0.01, "approx_kl": 0.2, "updates": 10})
+    keys = {h["key"] for h in st["hints"]}
+    assert "exploration_collapsed" in keys and "value_not_learning" in keys and "updates_too_large" in keys
+    assert "penalty_dominant" in keys                # 罰が報酬より大きい
+    assert st["learner"]["policy_std"] == 0.02 and st["terms"][0]["key"] == "action_rate"
