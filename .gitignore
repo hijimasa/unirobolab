@@ -60,3 +60,7 @@ generated/
 
 # ---- local UX review runtime projects ----
 .ux_review_runtime/
+
+# ---- baked at build time (Editor/LabFontBuilder) ----
+unity/UniRoboLab/Assets/UniRoboLab/Resources/
+unity/UniRoboLab/Assets/UniRoboLab/Resources.meta
