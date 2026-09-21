@@ -378,7 +378,13 @@ public class PhaseTrain : Phase
                               $"y: error 0 to {eHi:F2} {unit}   orange: success target {tol:g} {unit}   green: success rate (now {last * 100f:F0} %)   {err.Count} attempts");
     }
 
-    public override bool CanProceed(out string reason) { reason = ""; return true; }   // ④ は任意 (⑤ の前提は学習結果)
+    // ④ 試すは任意だが、④ も ⑤ も学習結果が要る。学習前に進んでも何もできないので、ここで止める
+    public override bool CanProceed(out string reason)
+    {
+        reason = IsTraining ? Ui.T("学習が終わるまで待ってください", "wait until training finishes")
+                            : Ui.T("先に ③ で学習してください", "train in step 3 first");
+        return P.Exists("run") && !IsTraining;
+    }
     public override bool Done() => P.Exists("run") && !P.IsStale("run");
     public override bool Stale() => P.IsStale("run");
     public override void Leave() { }

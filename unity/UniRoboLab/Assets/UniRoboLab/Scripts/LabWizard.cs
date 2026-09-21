@@ -29,6 +29,7 @@ public class LabWizard : MonoBehaviour
     TMP_Text m_NextHint;
     float m_MaterialFixAt;
     int m_RelayoutFrames;
+    string m_LastNextLog = "";
     readonly List<GameObject> m_EntityBuf = new List<GameObject>();
     Camera m_Cam;
     ExternalProcess m_EnvPy, m_EnvRos;
@@ -209,20 +210,21 @@ public class LabWizard : MonoBehaviour
             Ui.SetBtn(m_StepButtons[i], mark + ph.Title, i == m_Current ? Ui.BtnActive : (ph.Stale() ? new Color(0.55f, 0.40f, 0.20f) : (ph.Done() ? Ui.BtnDone : Ui.BtnNormal)), can);
         }
         m_Back.interactable = m_Current > 0;
-        // 「次へ」は、今のフェーズが進めること *と* 次のフェーズに入れることの両方が揃ってから押せる。
-        // 押せないときは灰色にし、足りないものを横に出す (青いまま押させて「まだです」と返すのをやめる)。
+        // 「次へ」は、今のフェーズが進める状態かどうかだけで決める。次のフェーズに入れるかは見ない:
+        // 「次へ」自体が前提を作ることがあるため (① の「次へ」がタスク仕様 task.json を書く)。
+        // 押せないときは灰色にし、足りないものを横に出す (青いまま押させて「まだです」と返さない)。
         string block = "";
         bool last = m_Current >= m_Phases.Count - 1;
         bool nextOk = !last && m_Phases[m_Current].CanProceed(out block);
-        if (nextOk && !m_Phases[m_Current + 1].CanEnter(out string enterReason))
-        {
-            // ② は「次へ」が生成そのものなので、③ にまだ入れなくても押せる
-            nextOk = m_Phases[m_Current].Key == "task";
-            if (!nextOk) block = enterReason;
-        }
         m_Next.interactable = nextOk;
         Ui.SetBtn(m_Next, Ui.T("次へ →", "Next →"), nextOk ? Ui.BtnActive : Ui.BtnNormal);
         if (m_NextHint != null) m_NextHint.text = last ? "" : (nextOk ? "" : block);
+        // ヘッドレスの動線テスト (scripts/tests/test_wizard_flow.sh) が「次へ」の状態を見られるように残す
+        if (Application.isBatchMode)
+        {
+            string line = $"[Wizard] next={(nextOk ? 1 : 0)} phase={m_Current + 1} reason={block}";
+            if (line != m_LastNextLog) { m_LastNextLog = line; Debug.Log(line); }
+        }
     }
 
     /// <summary>表示言語を切り替える。文言は作るときに決まるので、画面を組み直して同じフェーズへ戻る。

@@ -21,6 +21,15 @@ Success rate and error say whether it works, not why. Step ③ gained two views.
 - New advice is derived from both: penalties outweighing the reward, exploration collapsing early,
   the value function not fitting, and updates that are too large.
 
+### Fixed
+
+- **Step ① could not be left.** The Next button was greyed out after loading a URDF, with the status
+  line saying to press it. It required the *next* step to be enterable, but step ② needs `task.json`,
+  which the Next button on ① is what writes. The button now reflects only the current step, and each
+  step states its own requirement (③ says to train first, ⑤ says a PASS is needed for ⑥).
+  `scripts/tests/test_wizard_flow.sh` drives the player headlessly from a URDF-only project through
+  ①→②→③ and fails if a step cannot be left; it was checked to fail against the broken build.
+
 ### English or Japanese
 
 - The header has a language button. It rebuilds the screen in the other language and remembers the

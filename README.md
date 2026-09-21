@@ -57,7 +57,14 @@ ROS 2 Jazzy container (`docker/Dockerfile`: ros-base plus the ROS-TCP endpoint, 
 simulation_ros2_utils and topic_based_ros2_control built from pinned sources; about 1.3 GB). The image
 is built on the first start (about 10 minutes, network needed); the ⑤ screen has a button for it.
 
-Tests: `PYTHONPATH=python/src pytest python/tests` (no simulator needed).
+Tests:
+
+```bash
+PYTHONPATH=python/src pytest python/tests          # the Python package (no simulator needed)
+scripts/tests/test_sim2sim_container.sh            # the check container's helper script
+scripts/tests/test_wizard_flow.sh                  # ①→②→③ is reachable (needs a built player)
+<unity> -batchmode -runTests -testPlatform EditMode -projectPath unity/UniRoboLab   # the GUI's logic
+```
 
 ## Tutorial
 

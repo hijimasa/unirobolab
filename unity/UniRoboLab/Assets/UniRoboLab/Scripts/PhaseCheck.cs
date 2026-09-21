@@ -202,7 +202,8 @@ public class PhaseCheck : Phase
         }
     }
 
-    public override bool CanProceed(out string reason) { reason = ""; return true; }
+    // ⑥ は ⑤ の合格が前提 (PhaseDeploy.CheckState)。未実施・不合格・古い結果のままでは進ませない
+    public override bool CanProceed(out string reason) => PhaseDeploy.HasCurrentPass(P, out reason);
     public override bool Done() => P.Exists("report") && !P.IsStale("report") && P.D.stamp_keys.Contains("report");
     public override bool Stale() => P.IsStale("report");
     public override void Leave() { RestoreScale(); }

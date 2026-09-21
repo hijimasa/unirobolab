@@ -54,7 +54,14 @@ scripts/unirobolab_gui.sh ~/unirobolab_projects/first          # GUI を起動
 simulation_ros2_utils、topic_based_ros2_control をコミット固定のソースからビルド、約 1.3 GB)。イメージは
 初回の start で作られます (10 分ほど、ネットワークが要ります)。⑤ の画面のボタンでも同じことができます。
 
-テスト: `PYTHONPATH=python/src pytest python/tests` (シミュレータ不要)。
+テスト:
+
+```bash
+PYTHONPATH=python/src pytest python/tests          # Python パッケージ (シミュレータ不要)
+scripts/tests/test_sim2sim_container.sh            # ⑤ のコンテナの起動スクリプト
+scripts/tests/test_wizard_flow.sh                  # ①→②→③ が進めること (プレイヤーのビルドが要る)
+<unity> -batchmode -runTests -testPlatform EditMode -projectPath unity/UniRoboLab   # GUI のロジック
+```
 
 ## チュートリアル
 

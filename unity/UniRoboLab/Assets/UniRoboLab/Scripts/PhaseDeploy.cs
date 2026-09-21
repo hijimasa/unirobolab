@@ -71,12 +71,15 @@ public class PhaseDeploy : Phase
         }
     }
 
-    bool HasCurrentPass(out string reason)
+    /// <summary>⑤ の合格が今の内容に対して有効か。⑤ の「次へ」と ⑥ の入口・生成ボタンが同じ判定を使う。</summary>
+    public static bool HasCurrentPass(Project project, out string reason)
     {
-        CheckGateState state = CheckState(P);
+        CheckGateState state = CheckState(project);
         reason = state == CheckGateState.Ready ? "" : BlockReason(state);
         return state == CheckGateState.Ready;
     }
+
+    bool HasCurrentPass(out string reason) => HasCurrentPass(P, out reason);
 
     public override bool CanEnter(out string reason) => HasCurrentPass(out reason);
 
