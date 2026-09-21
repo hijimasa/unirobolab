@@ -9,6 +9,8 @@ getting it onto a ROS 2 robot. One window walks through six steps:
 in 3D) → **⑤ check** (run it through ROS 2 as the real robot would, judge PASS/FAIL, test the
 e-stop) → **⑥ deploy** (a generated ROS 2 package plus a plain-language deployment guide).
 
+The interface is English or Japanese, switched from the header and remembered between runs.
+
 It is not another massively-parallel physics simulator; Isaac Lab, mjlab and Genesis already do
 that well. UniRoboLab focuses on what those tools leave to the user: turning a policy into a ROS 2
 node whose observation/action wiring is guaranteed to match the environment it was trained in,

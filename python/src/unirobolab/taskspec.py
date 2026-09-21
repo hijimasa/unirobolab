@@ -166,42 +166,47 @@ _ENV_STEPS_PER_S = {
 }
 
 
-def estimate_time_s(spec: dict[str, Any], env_steps_per_s: float | None = None) -> tuple[float, str]:
+def estimate_time_s(spec: dict[str, Any], env_steps_per_s: float | None = None, lang: str = "ja") -> tuple[float, str]:
     """学習時間の目安 (秒) と根拠の 1 行。経験則: servo (関節 2、±1.2 rad、許容 0.05) で 13 万ステップ、
     許容を半分にすると約 2.5 倍、diffbot (領域到達、許容 0.15 m) で 20 万ステップ。並列数は速度に効く。
     実際の速度は PC の空き具合とロボットの重さで変わるので、③ の残り時間 (実測) とはずれる。"""
     goal = spec.get("goal") or [{}]
     c = goal[0]
     n_envs = int(spec.get("training", {}).get("n_envs", 8))
+    ja = lang != "en"
     if c.get("type") == "base_in_region":
         tol = float(c.get("tolerance", 0.15))
         steps = 200000 * (0.15 / max(tol, 1e-3)) ** 1.0
-        why = f"地点到達、許容 {tol:g} m、{n_envs} 体並列"
+        why = (f"地点到達、許容 {tol:g} m、{n_envs} 体並列" if ja
+               else f"reach a place, tolerance {tol:g} m, {n_envs} robots in parallel")
     elif c.get("type") == "link_near":
         tol = float(c.get("tolerance", 0.03))
         steps = 60000 * (0.03 / max(tol, 1e-3)) ** 1.2   # servo の手先 (許容 3 cm) で 5.2 万ステップ
-        why = f"手先を領域へ、許容 {tol:g} m、{n_envs} 体並列"
+        why = (f"手先を領域へ、許容 {tol:g} m、{n_envs} 体並列" if ja
+               else f"link into a region, tolerance {tol:g} m, {n_envs} robots in parallel")
     elif c.get("type") == "object_in_region":
         tol = float(c.get("tolerance", 0.05))
         steps = 250000 * (0.05 / max(tol, 1e-3)) ** 1.2   # 押し (平面腕、許容 5 cm) の目安; 到達より探索が要る
-        why = f"物体を領域へ、許容 {tol:g} m、{n_envs} 体並列"
+        why = (f"物体を領域へ、許容 {tol:g} m、{n_envs} 体並列" if ja
+               else f"object into a region, tolerance {tol:g} m, {n_envs} robots in parallel")
     else:
         tol = float(c.get("tolerance", 0.05))
         steps = 130000 * (0.05 / max(tol, 1e-3)) ** 1.3
-        why = f"関節目標、許容 {tol:g} rad、{n_envs} 体並列"
+        why = (f"関節目標、許容 {tol:g} rad、{n_envs} 体並列" if ja
+               else f"joint targets, tolerance {tol:g} rad, {n_envs} robots in parallel")
     if env_steps_per_s is None:
         env_steps_per_s = _ENV_STEPS_PER_S.get(c.get("type") or "joints_near", 1150.0)
     tr = spec.get("training", {})
     extra = []
     if spec.get("start", {}).get("joints", "zero") == "random":
-        steps *= 1.5; extra.append("開始姿勢のばらつき")
+        steps *= 1.5; extra.append("開始姿勢のばらつき" if ja else "start pose randomization")
     if any(isinstance(v, list) and len(v) == 2 for v in (tr.get("randomize") or {}).values()):
-        steps *= 1.5; extra.append("物理のばらつき")
+        steps *= 1.5; extra.append("物理のばらつき" if ja else "physics randomization")
     if int(tr.get("history_length", 1)) > 1:
-        steps *= 1.2; extra.append("履歴窓")
+        steps *= 1.2; extra.append("履歴窓" if ja else "a history window")
     if extra:
-        why += "、" + "・".join(extra) + "で長め"
-    why += "。おおよその目安で、実際の残り時間は ③ に出ます"
+        why += ("、" + "・".join(extra) + "で長め") if ja else (", longer with " + ", ".join(extra))
+    why += "。おおよその目安で、実際の残り時間は ③ に出ます" if ja else "; a rough estimate, the measured time left appears in step 3"
     rate = env_steps_per_s * (n_envs / 8.0) ** 0.7
     return steps / rate, why
 

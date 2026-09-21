@@ -198,7 +198,7 @@ def cmd_task_gen(a) -> int:
     from .taskspec import estimate_time_s, generate
     spec = _json.load(open(a.spec))
     if a.estimate_only:
-        secs, why = estimate_time_s(spec)
+        secs, why = estimate_time_s(spec, lang=getattr(a, "lang", "ja"))
         print(_json.dumps({"estimate_s": round(secs), "estimate_why": why}, ensure_ascii=False))
         return 0
     contract, train = generate(spec, os.path.dirname(os.path.abspath(a.spec)))
@@ -211,7 +211,7 @@ def cmd_task_gen(a) -> int:
     with open(tpath, "w") as f:
         _json.dump(train, f, indent=2, ensure_ascii=False); f.write("\n")
     _load(cpath, a.schema)
-    secs, why = estimate_time_s(spec)
+    secs, why = estimate_time_s(spec, lang=getattr(a, "lang", "ja"))
     print(_json.dumps({"contract": cpath, "train": tpath, "type": train["task"]["type"],
                        "episode_steps": train["task"]["episode_steps"], "estimate_s": round(secs), "estimate_why": why},
                       ensure_ascii=False))
@@ -406,6 +406,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--name", help="file stem for the contract (default: contract name)")
     s.add_argument("--schema")
     s.add_argument("--estimate-only", action="store_true", help="print the training-time estimate only")
+    s.add_argument("--lang", default="ja", choices=["ja", "en"], help="language of the estimate text")
     s.set_defaults(fn=cmd_task_gen)
 
     s = sub.add_parser("robot-info", help="joints, limits, base type of a URDF as JSON (for the GUI)")

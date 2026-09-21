@@ -3,6 +3,32 @@
 Dates are the day the work landed in this repository. Versions follow the Python package
 (`python/pyproject.toml`), which is also the version of the release zips.
 
+## 0.2.0 — 2026-09-22
+
+Two additions on top of 0.1.0, both about understanding and using the tool rather than new robot
+capability.
+
+### Seeing what training is doing
+
+Success rate and error say whether it works, not why. Step ③ gained two views.
+
+- **Reward breakdown**: the per-attempt contribution of every reward and penalty term, drawn over
+  time with a legend in plain words ("distance from hand to object", "jerky commands") and the
+  trend against the previous window. The data was already in `progress.csv` and was not shown.
+- **Inside the learner** (under Details): the policy's spread, how well the value function fits, and
+  how far each update moves the policy, each with a line saying what it means. They are also
+  recorded per update in `runs/<run>/updates.csv`.
+- New advice is derived from both: penalties outweighing the reward, exploration collapsing early,
+  the value function not fitting, and updates that are too large.
+
+### English or Japanese
+
+- The header has a language button. It rebuilds the screen in the other language and remembers the
+  choice in `~/.config/unirobolab/language.txt`, so the next run starts in it. Training and live
+  runs keep going across a switch.
+- The text the Python side produces follows the same choice, including the training-time estimate
+  in step ②, which used to stay Japanese.
+
 ## 0.1.0 — 2026-09-22
 
 First public release: the six-step wizard, from a URDF to a ROS 2 package that has been checked in
@@ -98,19 +124,6 @@ An outside agent ran the three robots through the wizard with only the tutorial 
   reached the generated files yet; the tutorial explains how to pick the robot's ROS 2 settings and
   how to verify them, what the coordinate frames and the three "size" fields mean, and how to get
   the generated package onto the robot.
-
-### Seeing what training is doing
-
-Success rate and error say whether it works, not why. Two views were added to step ③.
-
-- **Reward breakdown**: per-attempt contribution of every reward and penalty term, drawn over time
-  with a legend in plain words ("distance from hand to object", "jerky commands") and the trend
-  against the previous window. The data was already in `progress.csv` and was simply not shown.
-- **Inside the learner** (under Details): the policy's spread, how well the value function fits, and
-  how far each update moves the policy, each with a line saying what it means. They are also
-  recorded per update in `updates.csv`.
-- New advice is derived from both: penalties outweighing the reward, exploration collapsing early,
-  the value function not fitting, and updates that are too large.
 
 ### Known limits
 

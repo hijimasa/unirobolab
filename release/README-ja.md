@@ -40,6 +40,10 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_python.ps1 -Training
 .\UniRoboLab.cmd $HOME\unirobolab_projects\first
 ```
 
+表示は右上のボタンで日本語と英語を切り替えられます (選んだ言語は次回も使われます)。
+
+表示は右上のボタンで日本語と英語を切り替えられます (選んだ言語は次回も使われます)。
+
 あとは [docs/tutorial.md](docs/tutorial.md) の ① から進めてください。窓の上に 6 段階が並び、
 今の段階が青、済んだ段階が緑で示されます。下の状態行に「次に何をするか」と、ボタンが押せない理由が出ます。
 

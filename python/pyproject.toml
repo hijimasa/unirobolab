@@ -1,6 +1,6 @@
 [project]
 name = "unirobolab"
-version = "0.1.0"
+version = "0.2.0"
 description = "UniRoboLab: contract-driven policy packaging, sim2sim checks and training backend. Not published to PyPI; installed by the Unity binary via uv."
 readme = "README.md"
 requires-python = ">=3.10"

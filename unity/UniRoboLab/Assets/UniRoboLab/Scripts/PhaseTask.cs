@@ -44,7 +44,7 @@ public class PhaseTask : Phase
         m_Kind = Ui.Label(Root.transform, "", 13f, Ui.Header);
         var kr = Ui.Row(Root.transform, 26f);
         m_KindL = Ui.Label(kr.transform, Ui.T("何をさせるか", "Task kind"), 12f, Ui.Muted, false, 0f, 110f);
-        m_KindChoice = new Ui.Choice(kr.transform, new[] { Ui.T("関節を目標角へ", "joints to target angles"), Ui.T("手先を所定の場所へ", "a link to a target region"), Ui.T("物体を所定の場所へ", "an object to a target region") }, 0, 24f);
+        m_KindChoice = new Ui.Choice(kr.transform, new[] { Ui.T("関節を目標角へ", "joints to target angles"), Ui.T("手先を所定の場所へ", "link to a region"), Ui.T("物体を所定の場所へ", "object to a region") }, 0, 24f);
         m_KindChoice.OnChange = i => { if (m_Spec != null && !m_IsBase) SetKind(i); };
         Ui.Label(Root.transform, Ui.T("開始の位置と向き (ロボットはここからスタート。学習・チェックでも同じ)", "Start pose (used for training and the check as well)"), 12f, Ui.Muted);
         var sp = Ui.Row(Root.transform, 26f);
@@ -125,9 +125,9 @@ public class PhaseTask : Phase
         m_Randomize.OnChange = _ => Touch();
         var hr = Ui.Row(Root.transform, 26f);
         Ui.Label(hr.transform, Ui.T("方策の履歴窓", "Policy history window"), 12f, Ui.Text, false, 0f, 110f);
-        m_History = new Ui.Choice(hr.transform, new[] { Ui.T("今の観測だけ", "current observation only"), Ui.T("直近 8 回 (状況を推定できる)", "last 8 frames (infers the situation)") }, 0, 24f);
+        m_History = new Ui.Choice(hr.transform, new[] { Ui.T("今の観測だけ", "current observation only"), Ui.T("直近 8 回 (状況を推定できる)", "last 8 frames") }, 0, 24f);
         m_History.OnChange = _ => Touch();
-        Ui.Label(Root.transform, Ui.T("実機とのずれ (物体の重さ・滑りやすさ、モータの応答) に強くするなら両方を入れます。質量 ×0.5〜2、摩擦 0.2〜1.0、駆動 ×0.7〜1.3 で毎回変わります。学習は少し長くなります", "Turn both on for robustness to sim-to-real gaps: mass x0.5-2, friction 0.2-1.0 and drive gain x0.7-1.3 change every attempt. Training takes a little longer"), 11f, Ui.Muted, true, 30f);
+        Ui.Label(Root.transform, Ui.T("実機とのずれ (物体の重さ・滑りやすさ、モータの応答) に強くするなら両方を入れます。質量 ×0.5〜2、摩擦 0.2〜1.0、駆動 ×0.7〜1.3 で毎回変わります。学習は少し長くなります", "Both on = robust to sim-to-real gaps (mass x0.5-2, friction 0.2-1.0, drive x0.7-1.3 vary per attempt). Training takes longer"), 11f, Ui.Muted, true, 30f);
         m_Estimate = Ui.Label(Root.transform, "", 12f, Ui.Accent, true, 40f);
         m_Pending = Ui.Label(Root.transform, "", 12f, Ui.Warn, true, 34f);
         Ui.Label(Root.transform, Ui.T("「次へ」で契約と学習設定を生成します (学習はまだ始めません)。", "Next generates the contract and the training config (training does not start yet)."), 11f, Ui.Muted, true, 30f);
@@ -358,7 +358,7 @@ public class PhaseTask : Phase
         {
             m_EstAt = -1f; Apply();
             RefreshPending(); W.RefreshStepper();
-            m_Est = W.Launch($"{W.Py} -m unirobolab task-gen {ExternalProcess.Quote(P.Abs(P.D.task))} --estimate-only 2>&1");
+            m_Est = W.Launch($"{W.Py} -m unirobolab task-gen {ExternalProcess.Quote(P.Abs(P.D.task))} --estimate-only --lang {(Ui.Japanese ? "ja" : "en")} 2>&1");
         }
         if (m_Est != null && m_Est.HasExited)
         {

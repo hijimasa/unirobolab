@@ -23,7 +23,39 @@ public static class Ui
     public static readonly Color BtnActive = new Color(0.30f, 0.55f, 0.85f, 1f);
     public static readonly Color BtnDone = new Color(0.25f, 0.45f, 0.30f, 1f);
 
+    /// <summary>表示言語 (true = 日本語)。切り替えは LabWizard.SwitchLanguage から。</summary>
     public static bool Japanese { get; private set; }
+
+    /// <summary>日本語フォントが使えるか。使えないときは切り替えても字が出ないので、切り替えを出さない。</summary>
+    public static bool JapaneseAvailable { get; private set; }
+
+    static string LanguageFile => System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "unirobolab", "language.txt");
+
+    /// <summary>選んだ言語を覚える (次回の起動でもその言語)。</summary>
+    public static void SetJapanese(bool japanese)
+    {
+        Japanese = japanese && JapaneseAvailable;
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(LanguageFile));
+            System.IO.File.WriteAllText(LanguageFile, (Japanese ? "ja" : "en") + "\n");
+        }
+        catch (Exception) { }
+    }
+
+    static bool? SavedLanguage()
+    {
+        try
+        {
+            if (!System.IO.File.Exists(LanguageFile)) return null;
+            string v = System.IO.File.ReadAllText(LanguageFile).Trim().ToLowerInvariant();
+            if (v.StartsWith("ja")) return true;
+            if (v.StartsWith("en")) return false;
+        }
+        catch (Exception) { }
+        return null;
+    }
     static bool s_FontProbed;
 
     /// <summary>ja/en の 2 択。ラベルも文も同じ言語で出す。</summary>
@@ -107,7 +139,9 @@ public static class Ui
         var fallbacks = TMP_Settings.fallbackFontAssets ?? new List<TMP_FontAsset>();
         fallbacks.Add(fa);
         TMP_Settings.fallbackFontAssets = fallbacks;
-        Japanese = true;
+        JapaneseAvailable = true;
+        // 保存した選択があればそれに従う。無ければ日本語 (フォントがある環境の既定)
+        Japanese = SavedLanguage() ?? true;
         s_Font = fa;
         // 画面に出る日本語をまとめて焼いておく。必要になってから足す方式だと、アトラスが埋まった時点で
         // 以後の文字が空白になり、ボタンの文字が消える。ここで入らなければログに出る (診断用)。

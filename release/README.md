@@ -40,6 +40,12 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_python.ps1 -Training
 .\UniRoboLab.cmd $HOME\unirobolab_projects\first
 ```
 
+The button in the top-right switches the interface between English and Japanese; the choice is
+remembered for next time.
+
+The button in the top-right switches the interface between English and Japanese; the choice is
+remembered for next time.
+
 Then follow [docs/tutorial.md](docs/tutorial.md) from step ①. The window shows the six steps at the
 top; the current one is blue, finished ones green. The status line at the bottom tells you what to do
 next and why a button is disabled.

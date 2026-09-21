@@ -9,7 +9,7 @@ using UnityEngine.UI;
 /// <summary>
 /// UniRoboLab の画面全体: 上にステッパー (① ロボット → ⑥ 実機へ)、左にフェーズの主画面、右に 3D プレビュー、
 /// 下に状態行と「詳細 / 戻る / 次へ」。docs/ux-flow.md v2.1。
-/// ヘッドレス/撮影用: SIM_WIZARD_PROJECT=<dir>、SIM_WIZARD_PHASE=<1..6>、SIM_WIZARD_ACTION=<フェーズの主操作>、
+/// ヘッドレス/撮影用: SIM_WIZARD_PROJECT=<dir>、SIM_WIZARD_PHASE=<1..6>、SIM_WIZARD_ACTION=<フェーズの主操作 | language>、
 /// SIM_GUI_SCREENSHOT="a.png@10,b.png@done"。
 /// </summary>
 public class LabWizard : MonoBehaviour
@@ -131,6 +131,9 @@ public class LabWizard : MonoBehaviour
         var hrow = Ui.Row(header.transform, 44f); Stretch(hrow.GetComponent<RectTransform>()); hrow.GetComponent<HorizontalLayoutGroup>().padding = new RectOffset(14, 14, 6, 6);
         m_Title = Ui.Label(hrow.transform, "UniRoboLab", 18f, Ui.Header, false, 0f, 130f);
         m_ProjectLabel = Ui.Label(hrow.transform, "", 12f, Ui.Muted);
+        // 表示言語の切り替え。ボタンには「切り替えた先の言語」を出す (今が日本語なら English)
+        if (Ui.JapaneseAvailable)
+            Ui.Btn(hrow.transform, Ui.Japanese ? "English" : "日本語", () => SwitchLanguage(!Ui.Japanese), 90f, 26f);
         Ui.Btn(hrow.transform, Ui.T("プロジェクトを開く...", "Open project..."), OpenProjectDialog, 150f, 26f);
         // stepper
         var stepper = Ui.Box(m_Root, Ui.Panel); Anchor(stepper.rectTransform, 0f, 1f, 1f, 1f, 0f, -84f, 0f, -44f);
@@ -220,6 +223,25 @@ public class LabWizard : MonoBehaviour
         m_Next.interactable = nextOk;
         Ui.SetBtn(m_Next, Ui.T("次へ →", "Next →"), nextOk ? Ui.BtnActive : Ui.BtnNormal);
         if (m_NextHint != null) m_NextHint.text = last ? "" : (nextOk ? "" : block);
+    }
+
+    /// <summary>表示言語を切り替える。文言は作るときに決まるので、画面を組み直して同じフェーズへ戻る。
+    /// 学習や試運転の子プロセスはそのまま走り続ける (Leave を通さない)。</summary>
+    public void SwitchLanguage(bool japanese)
+    {
+        if (japanese == Ui.Japanese || !Ui.JapaneseAvailable) return;
+        Ui.SetJapanese(japanese);
+        int current = Mathf.Max(0, m_Current);
+        bool details = ExpertShown;
+        if (m_Root != null) DestroyImmediate(m_Root.gameObject);   // 1 フレームだけ二重に出さないため
+        m_Root = null; m_Main = null; m_Details = null; m_PreviewFrame = null; m_PreviewCover = null;
+        m_StepButtons.Clear();
+        foreach (Phase ph in m_Phases) { ph.Root = null; ph.DetailsRoot = null; }
+        m_Current = -1;
+        BuildUi();
+        GoTo(current, true);
+        ShowDetails(details);
+        Debug.Log("[Wizard] language: " + (Ui.Japanese ? "ja" : "en"));
     }
 
     public void ShowDetails(bool on)
@@ -315,6 +337,7 @@ public class LabWizard : MonoBehaviour
         {
             m_ActionAt = -1f;
             if (m_PendingAction == "next") { if (Current != null && Current.OnNext()) GoTo(m_Current + 1, false); }
+            else if (m_PendingAction == "language") SwitchLanguage(!Ui.Japanese);   // 撮影・確認用
             else Current?.Action(m_PendingAction);
             m_PendingAction = null;
         }
