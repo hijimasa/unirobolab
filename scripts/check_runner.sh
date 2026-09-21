@@ -10,6 +10,7 @@
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 export PYTHONPATH="$ROOT/python/src:${PYTHONPATH:-}"
 NS=${NS:-robot}; for v in OUT CONTRACT ONNX URDF; do [ -n "${!v:-}" ] || { echo "##FAIL $v is not set"; exit 1; }; done
+case "$OUT" in /*) ;; *) echo "##FAIL OUT must be an absolute path"; exit 1 ;; esac
 mkdir -p "$OUT"
 LOG="$OUT/check_runner.log"; : > "$LOG"
 say() { echo "##STEP $1"; echo "##STEP $1" >> "$LOG"; }
@@ -29,7 +30,7 @@ ros2 pkg prefix simulation_ros2_utils >/dev/null 2>&1 || fail "simulation_ros2_u
 ros2 pkg prefix ros_tcp_endpoint >/dev/null 2>&1 || fail "ros_tcp_endpoint is not in this ROS 2 environment"
 
 say "1/5 generating the ROS 2 package"
-rm -rf "$OUT/pkg" "$OUT/ws"
+rm -rf -- "$OUT/pkg" "$OUT/ws"
 python3 -m unirobolab gen "$CONTRACT" --out "$OUT/pkg" --onnx "$ONNX" --overwrite >> "$LOG" 2>&1 || fail "package generation failed (see $LOG)"
 PKG=$(ls "$OUT/pkg" | head -1)
 

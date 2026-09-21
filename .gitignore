@@ -57,3 +57,6 @@ unity/**/.vscode/
 
 # ---- generated packages and sim2sim output ----
 generated/
+
+# ---- local UX review runtime projects ----
+.ux_review_runtime/

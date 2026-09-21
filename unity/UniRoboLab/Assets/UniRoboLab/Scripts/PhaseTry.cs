@@ -89,6 +89,8 @@ public class PhaseTry : Phase
             if (m_IsObject) cmd.Append(" --objects-from ").Append(ExternalProcess.Quote(P.Abs(P.D.task)));   // 物体は live が <ロボット>__<物体> としてスポーンし開始位置へ置く
         }
         cmd.Append(" 2>&1");
+        m_RawBuf.Clear();
+        if (m_Raw != null) m_Raw.text = "";
         m_Proc = W.Launch(cmd.ToString());
         m_Running = true; m_GoalSize = -1; ClearTrail(); if (m_Marker != null) m_Marker.SetActive(false);
         if (m_SavedScale < 0f) { m_SavedScale = SimulationControl.ConfiguredTimeScale; SimulationControl.ConfiguredTimeScale = 1f; if (Time.timeScale > 1f) Time.timeScale = 1f; }
@@ -117,7 +119,23 @@ public class PhaseTry : Phase
                 else if (last.StartsWith("!")) W.Status(last, Ui.Bad);
                 if (Application.isBatchMode) Debug.Log("[Wizard/try] " + last);
             }
-            if (m_Proc.HasExited) { int code = m_Proc.ExitCode; m_Proc = null; m_Running = false; RestoreScale(); if (code != 0) W.Status(Ui.T($"実行器が終了 (exit {code})。「詳細」を見てください", $"runner exited ({code}); see Details"), Ui.Bad); }
+            if (m_Proc.HasExited)
+            {
+                m_Proc.WaitForExit();
+                while (m_Proc.TryDequeue(out string tail))
+                {
+                    m_RawBuf.AppendLine(tail);
+                    if (m_RawBuf.Length > 4000) m_RawBuf.Remove(0, 1500);
+                }
+                if (m_Raw != null && m_Raw.gameObject.activeInHierarchy) m_Raw.text = m_RawBuf.ToString();
+                int code = m_Proc.ExitCode; m_Proc = null; m_Running = false; RestoreScale();
+                if (code != 0)
+                {
+                    var failure = ProcessFailureGuide.ForRunner(m_RawBuf.ToString(), code, Env.LearningPort(), Ui.Japanese);
+                    m_Plain.text = failure.Message;
+                    W.Status(failure.Message, Ui.Bad);
+                }
+            }
         }
         UpdateTrail(); UpdatePicking();
         if (m_SendAt >= 0f && Time.unscaledTime >= m_SendAt) { m_SendAt = -1f; SendGoal(SliderGoal()); }

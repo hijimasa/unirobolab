@@ -89,7 +89,10 @@ public class Project
             case "contract": return HashFile(Abs(D.urdf)) + HashText(D.name + "|" + D.ns + "|" + D.command_mode + "|" + D.controller + "|" + D.estop_topic);
             case "train": return HashFile(Abs(D.task)) + HashFile(Abs(D.contract));
             case "run": return HashFile(Abs(D.train)) + HashFile(Abs(D.contract));
-            case "report": return HashFile(Abs(D.contract)) + HashFile(OnnxPath);
+            // A check result is only valid for the exact task, contract and policy that
+            // produced it.  Include the report itself so a later failed/replaced report
+            // cannot keep using the stamp of an earlier PASS.
+            case "report": return HashFile(Abs(D.task)) + HashFile(Abs(D.contract)) + HashFile(OnnxPath) + HashFile(Abs(D.report));
             case "deploy": return HashFile(Abs(D.contract)) + HashFile(OnnxPath);
         }
         return "";

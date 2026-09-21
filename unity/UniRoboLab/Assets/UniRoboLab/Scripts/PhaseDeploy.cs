@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Text;
 using TMPro;
@@ -7,6 +8,11 @@ using UnityEngine.UI;
 /// <summary>⑥ 実機へ: ⑤ で確かめた契約と方策から ROS 2 パッケージと手順書を作る。接続先は ① で決めたもの。</summary>
 public class PhaseDeploy : Phase
 {
+    public enum CheckGateState { Ready, Missing, NotPassed, Unverified, Stale }
+
+    [Serializable]
+    sealed class CheckReportSummary { public bool pass; }
+
     public override string Key => "deploy";
     public override string Title => Ui.T("⑥ 実機へ", "6 Deploy");
     public override LabWizard.PreviewMode Preview => LabWizard.PreviewMode.Hidden;
@@ -34,18 +40,57 @@ public class PhaseDeploy : Phase
         m_Guide = Ui.Label(DetailsRoot.transform, "", 10f, Ui.Text, true, 0f); m_Guide.GetComponent<LayoutElement>().flexibleHeight = 1f; m_Guide.alignment = TextAlignmentOptions.TopLeft;
     }
 
-    public override bool CanEnter(out string reason) { reason = Ui.T("先に ③ で学習してください", "train in step 3 first"); return P.Exists("run"); }
+    public static CheckGateState CheckState(Project project)
+    {
+        if (!project.Exists("report")) return CheckGateState.Missing;
+
+        try
+        {
+            var report = JsonUtility.FromJson<CheckReportSummary>(File.ReadAllText(project.Abs(project.D.report)));
+            if (report == null || !report.pass) return CheckGateState.NotPassed;
+        }
+        catch (Exception) { return CheckGateState.NotPassed; }
+
+        int stamp = project.D.stamp_keys.IndexOf("report");
+        if (stamp < 0 || stamp >= project.D.stamp_values.Count) return CheckGateState.Unverified;
+        return project.D.stamp_values[stamp] == project.InputsOf("report") ? CheckGateState.Ready : CheckGateState.Stale;
+    }
+
+    static string BlockReason(CheckGateState state)
+    {
+        switch (state)
+        {
+            case CheckGateState.Missing:
+                return Ui.T("先に ⑤ チェックへ戻り、「チェックを実行」を押して合格してください", "Go back to step 5 Check, press Run the check, and obtain a PASS first");
+            case CheckGateState.NotPassed:
+                return Ui.T("⑤ の最新結果は不合格です。⑤ チェックへ戻り、表示された対策後に再実行して合格してください", "The latest step 5 result did not pass. Go back to step 5 Check, apply the suggested fixes, then rerun it and obtain a PASS");
+            case CheckGateState.Unverified:
+                return Ui.T("⑤ の合格確認がありません。⑤ チェックへ戻り、「チェックを実行」を再実行して合格してください", "There is no verified PASS from step 5. Go back to step 5 Check, rerun it, and obtain a PASS");
+            default:
+                return Ui.T("⑤ の合格後にタスク、契約、方策、または結果が変わっています。⑤ チェックへ戻り、現在の内容で再実行して合格してください", "The task, contract, policy, or result changed after the step 5 PASS. Go back to step 5 Check, rerun it with the current files, and obtain a PASS");
+        }
+    }
+
+    bool HasCurrentPass(out string reason)
+    {
+        CheckGateState state = CheckState(P);
+        reason = state == CheckGateState.Ready ? "" : BlockReason(state);
+        return state == CheckGateState.Ready;
+    }
+
+    public override bool CanEnter(out string reason) => HasCurrentPass(out reason);
 
     public override void Enter()
     {
-        bool checked_ = P.Exists("report") && !P.IsStale("report");
+        bool checked_ = HasCurrentPass(out string blockReason);
         m_Head.text = (checked_ ? Ui.T("✓ ⑤ で確かめた契約と方策をそのまま使います。", "✓ Uses the contract and policy verified in step 5.")
                                  : Ui.T("! ⑤ のチェックが未実施か古いです。実機に持っていく前に確かめてください。", "! Step 5 has not been run (or is stale); check before the real robot."))
                       + "\n" + Ui.T("接続先 (① で決めたもの): ", "Connection (from step 1): ") + P.D.ns + " / " + (P.D.command_mode == "ros2_control_commands" ? "ros2_control" : "JointState");
         m_Head.color = checked_ ? Ui.Text : Ui.Warn;
+        m_Make.interactable = checked_;
         if (string.IsNullOrEmpty(m_Out.text)) m_Out.text = string.IsNullOrEmpty(P.D.deploy_dir) ? Path.Combine(P.Dir, "deploy") : P.Abs(P.D.deploy_dir);
         if (P.Exists("deploy")) ShowExisting();
-        W.Status(Ui.T("「作る」を押すとパッケージと手順書ができます", "Press the build button to create the package and the guide"));
+        W.Status(checked_ ? Ui.T("「作る」を押すとパッケージと手順書ができます", "Press the build button to create the package and the guide") : blockReason, checked_ ? (Color?)null : Ui.Warn);
     }
 
     void ShowExisting()
@@ -66,6 +111,12 @@ public class PhaseDeploy : Phase
     void Make()
     {
         if (m_Proc != null && !m_Proc.HasExited) return;
+        if (!HasCurrentPass(out string reason))
+        {
+            m_Make.interactable = false;
+            W.Status(reason, Ui.Warn);
+            return;
+        }
         P.D.deploy_dir = P.Rel(m_Out.text); P.Save();
         m_Step = 1;
         m_Proc = W.Launch($"{W.Py} -m unirobolab gen {ExternalProcess.Quote(P.Abs(P.D.contract))} --out {ExternalProcess.Quote(m_Out.text)} --onnx {ExternalProcess.Quote(P.OnnxPath)} --overwrite 2>&1");
@@ -74,7 +125,12 @@ public class PhaseDeploy : Phase
 
     public override void Tick()
     {
-        if (m_Proc == null || !m_Proc.HasExited) return;
+        if (m_Proc == null)
+        {
+            m_Make.interactable = HasCurrentPass(out _);
+            return;
+        }
+        if (!m_Proc.HasExited) return;
         m_Proc.WaitForExit(); var sb = new StringBuilder(); while (m_Proc.TryDequeue(out string l)) sb.AppendLine(l);
         string text = sb.ToString().Trim(); bool ok = m_Proc.ExitCode == 0; m_Proc = null;
         if (!ok) { W.Status(Ui.T("失敗: ", "failed: ") + text, Ui.Bad); m_Step = 0; return; }

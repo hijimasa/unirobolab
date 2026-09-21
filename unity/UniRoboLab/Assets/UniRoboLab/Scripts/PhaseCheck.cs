@@ -16,13 +16,13 @@ public class PhaseCheck : Phase
     public override string Title => Ui.T("⑤ チェック", "5 Check");
     public override LabWizard.PreviewMode Preview => LabWizard.PreviewMode.Side;
 
-    const string ContainerName = "unirobolab-sim2sim-jazzy";
-
     TMP_Text m_Env, m_List, m_Raw, m_Log;
     Button m_Run, m_Stop, m_Container;
     readonly List<TMP_Text> m_Steps = new List<TMP_Text>();
     ExternalProcess m_Runner, m_Explain, m_ContainerProc, m_RosProbe;
     string m_OutDir, m_ReportPath;
+    long m_ReportWriteTicksBeforeRun;
+    bool m_StampReportOnExplain;
     float m_SavedScale = -1f;
     string m_EnvShown = "";
     readonly StringBuilder m_LogBuf = new StringBuilder();
@@ -56,8 +56,8 @@ public class PhaseCheck : Phase
         m_ReportPath = Path.Combine(m_OutDir, "report.json");
         RefreshEnv();
         ResetSteps();
-        if (File.Exists(m_ReportPath) && P.Exists("report")) LoadReport(); else m_List.text = Ui.T("(まだ結果がありません)", "(no result yet)");
-        if (P.IsStale("report")) m_List.text = Ui.T("! 契約か方策が変わっています。チェックし直してください\n", "! the contract or the policy changed; check again\n") + m_List.text;
+        if (File.Exists(m_ReportPath) && P.Exists("report")) LoadReport(false); else m_List.text = Ui.T("(まだ結果がありません)", "(no result yet)");
+        if (P.IsStale("report")) m_List.text = Ui.T("! タスク、契約、方策、または結果が変わっています。チェックし直してください\n", "! the task, contract, policy, or result changed; check again\n") + m_List.text;
         W.Status(Ui.T("「チェックを実行」を押してください", "Press Run the check"));
     }
 
@@ -67,7 +67,7 @@ public class PhaseCheck : Phase
         m_Env.text = Env.Ros2 switch
         {
             "host" => Ui.T("ROS 2: この PC で実行します", "ROS 2: runs on this machine"),
-            "container" => Ui.T("ROS 2: コンテナ (unirobolab-sim2sim) で実行します。プロジェクトはリポジトリ配下にある必要があります", "ROS 2: runs in the unirobolab-sim2sim container (the project must be inside the repository)"),
+            "container" => Ui.T("ROS 2: コンテナ (unirobolab-sim2sim) で実行します。選択中のプロジェクトだけをコンテナと共有します", "ROS 2: runs in the unirobolab-sim2sim container (only the current project is shared with it)"),
             "docker-only" => Ui.T("ROS 2: 無し。コンテナを起動すると実行できます (初回はイメージの作成に 10 分ほどかかります)", "ROS 2: none; start the container to run the check (the first start builds the image, about 10 minutes)"),
             _ => Ui.T("ROS 2 も Docker も見つかりません。チェックは ROS 2 のある環境で実行してください", "Neither ROS 2 nor Docker found; run the check where ROS 2 is available"),
         };
@@ -81,23 +81,10 @@ public class PhaseCheck : Phase
         for (int i = 0; i < 5; i++) { m_Steps[i].text = $"   {i + 1}. " + (Ui.Japanese ? k_StepsJa[i] : k_StepsEn[i]); m_Steps[i].color = Ui.Muted; }
     }
 
-    /// <summary>コンテナにはホストと同じパスでリポジトリのリンクがある (sim2sim_container.sh start) ので、
-    /// パスは読み替えない。スポーンの URDF はシミュレータ (ホスト) が開くので、ホストのパスでなければならない。</summary>
-    string ToRunner(string hostPath)
-    {
-        if (Env.Ros2 != "container") return hostPath;
-        string root = Env.RepoRoot.TrimEnd('/');
-        return hostPath.StartsWith(root) ? hostPath : null;
-    }
-
     void RunCheck()
     {
         if (m_Runner != null && !m_Runner.HasExited) return;
-        string contract = ToRunner(P.Abs(P.D.contract)), onnx = ToRunner(P.OnnxPath), urdf = ToRunner(P.Abs(P.D.urdf)), task = ToRunner(P.Abs(P.D.task)), outDir = ToRunner(m_OutDir);
-        if (contract == null || onnx == null || urdf == null || outDir == null)
-        {
-            W.Status(Ui.T("コンテナからはリポジトリ配下のプロジェクトだけ実行できます: ", "the container can only reach projects inside the repository: ") + P.Dir, Ui.Warn); return;
-        }
+        string contract = P.Abs(P.D.contract), onnx = P.OnnxPath, urdf = P.Abs(P.D.urdf), task = P.Abs(P.D.task), outDir = m_OutDir;
         // 被検体はこのシミュレータ: 学習/試す で置いたロボットを消し、実時間に戻す
         var buf = new List<GameObject>(); W.Sim.GetEntitiesSnapshot(buf);
         foreach (GameObject e in buf) if (e != null) W.Sim.TryDeleteEntityByName(e.name);
@@ -105,8 +92,9 @@ public class PhaseCheck : Phase
         string ns = string.IsNullOrEmpty(P.D.ns) ? "robot" : P.D.ns;
         string envs = $"CONTRACT={ExternalProcess.Quote(contract)} ONNX={ExternalProcess.Quote(onnx)} URDF={ExternalProcess.Quote(urdf)} TASK={ExternalProcess.Quote(task ?? "")} OUT={ExternalProcess.Quote(outDir)} NS={ExternalProcess.Quote(ns)} SPAWN_YAW={W.StartYawRad:F5} SPAWN_X={W.StartX:F3} SPAWN_Y={W.StartY:F3}";
         string cmd = Env.Ros2 == "container"
-            ? $"docker exec {ContainerName} env {envs} bash {ExternalProcess.Quote(Path.Combine(Env.RepoRoot, "scripts", "check_runner.sh"))} 2>&1"
+            ? $"env {envs} bash {ExternalProcess.Quote(Path.Combine(Env.RepoRoot, "scripts", "sim2sim_container.sh"))} check jazzy {ExternalProcess.Quote(P.Dir)} 2>&1"
             : $"env {envs} bash {ExternalProcess.Quote(Path.Combine(Env.RepoRoot, "scripts", "check_runner.sh"))} 2>&1";
+        m_ReportWriteTicksBeforeRun = File.Exists(m_ReportPath) ? File.GetLastWriteTimeUtc(m_ReportPath).Ticks : 0L;
         m_LogBuf.Clear(); ResetSteps(); m_List.text = "";
         m_Runner = W.Launch(cmd);
         m_Run.interactable = false;
@@ -142,15 +130,16 @@ public class PhaseCheck : Phase
     void StartContainer()
     {
         if (m_ContainerProc != null && !m_ContainerProc.HasExited) return;
-        m_ContainerProc = W.Launch($"bash {ExternalProcess.Quote(Path.Combine(Env.RepoRoot, "scripts", "sim2sim_container.sh"))} start 2>&1");
+        m_ContainerProc = W.Launch($"bash {ExternalProcess.Quote(Path.Combine(Env.RepoRoot, "scripts", "sim2sim_container.sh"))} start jazzy {ExternalProcess.Quote(P.Dir)} 2>&1");
         W.Status(Ui.T("コンテナを起動しています...", "starting the container..."));
     }
 
-    void LoadReport()
+    void LoadReport(bool stampOnPass)
     {
         if (!File.Exists(m_ReportPath)) return;
         m_Raw.text = File.ReadAllText(m_ReportPath);
         m_Explain?.Stop();
+        m_StampReportOnExplain = stampOnPass;
         m_Explain = W.Launch($"{W.Py} -m unirobolab explain-report {ExternalProcess.Quote(m_ReportPath)} --lang {(Ui.Japanese ? "ja" : "en")} 2>&1");
     }
 
@@ -176,12 +165,14 @@ public class PhaseCheck : Phase
             if (m_Runner.HasExited)
             {
                 int code = m_Runner.ExitCode; m_Runner = null; RestoreScale(); m_Run.interactable = true;
-                if (File.Exists(m_ReportPath))
+                bool newReport = File.Exists(m_ReportPath) && File.GetLastWriteTimeUtc(m_ReportPath).Ticks != m_ReportWriteTicksBeforeRun;
+                if (newReport)
                 {
                     for (int i = 0; i < 5; i++) { m_Steps[i].text = $"✓ {i + 1}. " + (Ui.Japanese ? k_StepsJa[i] : k_StepsEn[i]); m_Steps[i].color = Ui.Accent; }
-                    LoadReport();
+                    LoadReport(true);
                 }
                 else if (code != 0) W.Status(Ui.T("チェックを実行できませんでした。「詳細」のログを見てください", "the check could not run; see the log under Details"), Ui.Bad);
+                else W.Status(Ui.T("チェック結果が更新されませんでした。もう一度実行してください", "the check result was not updated; run the check again"), Ui.Bad);
             }
         }
         if (m_ContainerProc != null && m_ContainerProc.HasExited)
@@ -198,10 +189,15 @@ public class PhaseCheck : Phase
             m_Explain.WaitForExit(); var sb = new StringBuilder(); while (m_Explain.TryDequeue(out string l)) sb.AppendLine(l);
             bool pass = m_Explain.ExitCode == 0; m_Explain = null;
             m_List.text = sb.ToString().Trim();
-            P.D.report = P.Rel(m_ReportPath); if (pass) P.Stamp("report"); P.Save(); W.RefreshStepper();
+            P.D.report = P.Rel(m_ReportPath); if (pass && m_StampReportOnExplain) P.Stamp("report"); P.Save();
+            bool currentPass = pass && PhaseDeploy.CheckState(P) == PhaseDeploy.CheckGateState.Ready;
+            W.RefreshStepper();
+            m_StampReportOnExplain = false;
             if (Application.isBatchMode) foreach (string l in m_List.text.Split('\n')) Debug.Log("[Wizard/check] " + l);
-            W.Status(pass ? Ui.T("合格です。⑥ で実機用のパッケージを作ります", "Passed. Build the package for the real robot in step 6") : Ui.T("不合格。次の一手を見てください", "Failed; see the next steps"), pass ? Ui.Accent : Ui.Warn);
-            if (pass) W.TriggerDoneShots();
+            W.Status(currentPass ? Ui.T("合格です。⑥ で実機用のパッケージを作ります", "Passed. Build the package for the real robot in step 6")
+                                 : pass ? Ui.T("以前の合格結果です。現在の内容でチェックを再実行してください", "This is an earlier PASS; rerun the check with the current files")
+                                        : Ui.T("不合格。次の一手を見てください", "Failed; see the next steps"), currentPass ? Ui.Accent : Ui.Warn);
+            if (currentPass) W.TriggerDoneShots();
         }
     }
 
@@ -209,5 +205,5 @@ public class PhaseCheck : Phase
     public override bool Done() => P.Exists("report") && !P.IsStale("report") && P.D.stamp_keys.Contains("report");
     public override bool Stale() => P.IsStale("report");
     public override void Leave() { RestoreScale(); }
-    public override void Action(string name) { if (name == "check") RunCheck(); else if (name == "load") LoadReport(); }
+    public override void Action(string name) { if (name == "check") RunCheck(); else if (name == "load") LoadReport(false); }
 }

@@ -132,7 +132,13 @@ public class PhaseTrain : Phase
                         W.Status(Ui.T("学習が終わりました。④ で試すか、⑤ でチェックへ", "Training finished. Try it in step 4 or check it in step 5"), Ui.Accent);
                     W.RefreshStepper(); W.TriggerDoneShots();
                 }
-                else W.Status(Ui.T($"学習が異常終了しました (exit {code})。「詳細」のログを見てください", $"training failed (exit {code}); see the log under Details"), Ui.Bad);
+                else
+                {
+                    var failure = ProcessFailureGuide.ForTraining(m_LogBuf.ToString(), code, Env.LearningPort(), Ui.Japanese);
+                    m_Hint.text = failure.Message;
+                    m_Back2.gameObject.SetActive(failure.SuggestTaskReview);
+                    W.Status(failure.Message, Ui.Bad);
+                }
                 m_StatusNextAt = 0f;
             }
         }

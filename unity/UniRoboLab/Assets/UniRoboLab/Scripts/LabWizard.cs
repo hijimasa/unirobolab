@@ -110,7 +110,7 @@ public class LabWizard : MonoBehaviour
         if (!P.Has(P.D.urdf)) return 0;
         if (!P.Exists("train") || P.IsStale("contract") || P.IsStale("train")) return 1;
         if (!P.Exists("run") || P.IsStale("run")) return 2;
-        if (!P.Exists("report") || P.IsStale("report")) return 4;
+        if (PhaseDeploy.CheckState(P) != PhaseDeploy.CheckGateState.Ready) return 4;
         return 5;
     }
 
