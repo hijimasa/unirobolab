@@ -4,8 +4,10 @@ English | [日本語](README-ja.md)
 
 UniRoboLab trains a robot policy in a Unity simulator and takes it to a ROS 2 robot in six
 steps, all from one window: **① robot → ② task → ③ train → ④ try → ⑤ check → ⑥ deploy**.
-You bring a URDF; the tool generates the training setup, trains a policy, lets you try it in 3D,
-checks it against a ROS 2 simulation, and writes the ROS 2 package and the deployment notes.
+The only file you supply is a URDF: from it the tool generates the training setup, trains a policy,
+lets you try it in 3D, checks it against a ROS 2 simulation, and writes the ROS 2 package and the
+deployment notes. The machine still needs what the table below lists, and steps ⑤ and ⑥ need the
+robot's ROS 2 details (namespace, command topic or controller, e-stop topic), which you enter in ①.
 
 The step-by-step guide with screenshots is [docs/tutorial.md](docs/tutorial.md).
 
@@ -58,6 +60,7 @@ starts take seconds.
 | `contract/` | the policy contract schema (what the policy sees and outputs) and examples |
 | `docs/` | the tutorial and its screenshots |
 | `.venv/` | created by the setup script; delete it to start over |
+| `CHANGELOG.md` | what is in this version, and the known limits |
 
 Projects (task, contract, training runs, reports) live in the folder you pass at start-up, not here.
 

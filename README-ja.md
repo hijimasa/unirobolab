@@ -76,7 +76,8 @@ GUI がすることはすべて `unirobolab` のサブコマンドです (`.venv
 
 既知の制限: 条件は 1 タスクに 1 つ。把持は未対応 (押すのみ)。⑤ は Linux のみ。Windows 版は補助コマンドを
 Git for Windows の `bash.exe` で動かす作りで、実機ではまだ試していません。学習済み方策の評価は
-40 エピソードで ±10 % ほどばらつきます。
+40 エピソードで ±10 % ほどばらつきます。外部レビューで挙がった未対応の指摘は
+[CHANGELOG.md](CHANGELOG.md) と [docs/reviews/2026-09-20-ux-review-result.md](docs/reviews/2026-09-20-ux-review-result.md) にあります。
 
 ## 構成
 

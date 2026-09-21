@@ -84,7 +84,9 @@ Verified end to end on this machine (see [docs/architecture.md](docs/architectur
 
 Known limits: one goal condition per task; no grasping (pushing only); ⑤ is Linux-only; the Windows
 player runs its helpers through Git for Windows' `bash.exe` and has not been exercised on real
-hardware yet; evaluation of a trained policy varies by about ±10 % over 40 episodes.
+hardware yet; evaluation of a trained policy varies by about ±10 % over 40 episodes. Open points
+from the first outside UX review are listed in [CHANGELOG.md](CHANGELOG.md) and
+[docs/reviews/2026-09-20-ux-review-result.md](docs/reviews/2026-09-20-ux-review-result.md).
 
 ## Layout
 

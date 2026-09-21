@@ -33,7 +33,7 @@ for os in $TARGETS; do
   cp -r "$ROOT/docker" "$STAGE/docker"
   for f in unirobolab_gui.sh setup_python.sh setup_python.ps1 sim2sim_container.sh check_runner.sh gui_resources.json; do cp "$ROOT/scripts/$f" "$STAGE/scripts/"; done
   cp "$ROOT/docs/tutorial.md" "$STAGE/docs/"; cp -r "$ROOT/docs/images/tutorial2" "$STAGE/docs/images/"
-  cp "$ROOT/LICENSE" "$STAGE/"
+  cp "$ROOT/LICENSE" "$STAGE/"; cp "$ROOT/CHANGELOG.md" "$STAGE/"
   cp "$ROOT/release/README.md" "$STAGE/README.md"; cp "$ROOT/release/README-ja.md" "$STAGE/README-ja.md"
   if [ $os = linux ]; then cp "$ROOT/scripts/UniRoboLab.sh" "$STAGE/UniRoboLab.sh"; chmod +x "$STAGE/UniRoboLab.sh" "$STAGE"/scripts/*.sh "$STAGE/player/UniRoboLab.x86_64"; fi
   if [ $os = windows ]; then cp "$ROOT/scripts/UniRoboLab.cmd" "$STAGE/UniRoboLab.cmd"; fi
